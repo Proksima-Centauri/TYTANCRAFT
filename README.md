@@ -20,7 +20,7 @@ Skrypt kompiluje źródła i uruchamia grę. Pominięcie opcjonalnego seedu losu
 - Cykl dnia i nocy trwa 4 minuty przy **1×**; słońce przesuwa się po niebie, a pogoda zmienia się między słońcem, chmurami i deszczem
 - **WASD** — ruch, **Spacja** — skok, **Shift** — sprint
 - W Przetrwaniu wskaźniki serc i głodu są u góry; pod wodą pojawia się tlen. Jedz surowe mięso lub brązowe grzyby klawiszem **R**; czerwone muchomory odbierają zdrowie
-- **Lewy przycisk myszy** atakuje wskazane zwierzę; po zabiciu zbierasz mięso
+- **Lewy przycisk myszy** atakuje wskazane zwierzę; po zabiciu zbierasz mięso, owce upuszczają wełnę, a ryby ikrę swojego gatunku. Dwa zwierzęta tego samego gatunku rozmnażają się, gdy są blisko siebie
 - W kreatywnym **Spacja/Ctrl** — lot w górę/w dół; bloki są nieograniczone
 - W przetrwaniu zbieraj bloki, pilnuj zdrowia i wydobywaj rudy: węgiel, miedź, żelazo, złoto, diamenty, szmaragdy, rubiny i szafiry
 - **E** — otwórz plecak: wybierz bloki do 10 miejsc hotbara albo wytwarzaj deski, pochodnie i bloki szmaragdu

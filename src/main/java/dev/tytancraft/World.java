@@ -54,6 +54,7 @@ final class World {
     static final byte TROPICAL_FISH_SPAWN_EGG = 39;
     static final byte PIKE_SPAWN_EGG = 40;
     static final byte CARP_SPAWN_EGG = 41;
+    static final byte WOOL = 42;
     private final byte[] blocks = new byte[WIDTH * HEIGHT * DEPTH];
     private final short[] waterFlow = new short[WIDTH * HEIGHT * DEPTH];
     private final int[] heights = new int[WIDTH * DEPTH];

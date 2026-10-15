@@ -64,7 +64,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             World.RED_MUSHROOM_SMALL, World.RED_MUSHROOM_MEDIUM, World.RED_MUSHROOM_LARGE,
             World.BROWN_MUSHROOM_SMALL, World.BROWN_MUSHROOM_MEDIUM, World.BROWN_MUSHROOM_LARGE,
             World.COD_SPAWN_EGG, World.SALMON_SPAWN_EGG, World.TROPICAL_FISH_SPAWN_EGG,
-            World.PIKE_SPAWN_EGG, World.CARP_SPAWN_EGG
+            World.PIKE_SPAWN_EGG, World.CARP_SPAWN_EGG, World.WOOL
     };
     private static final String[] BLOCK_NAMES = {
             "Trawa", "Ziemia", "Kamień", "Piasek", "Drewno", "Liście", "Węgiel", "Miedź",
@@ -73,7 +73,25 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             "Igły świerku", "Drewno akacji", "Liście akacji", "Drewno wiśni", "Liście wiśni",
             "Deski", "Pochodnia", "Blok szmaragdu", "Mały muchomor", "Średni muchomor",
             "Duży muchomor", "Mały grzyb jadalny", "Średni grzyb jadalny", "Duży grzyb jadalny",
-            "Ikra dorsza", "Ikra łososia", "Ikra tropikalna", "Ikra szczupaka", "Ikra karpia"
+            "Ikra dorsza", "Ikra łososia", "Ikra tropikalna", "Ikra szczupaka", "Ikra karpia", "Wełna"
+    };
+    private static final byte[] BLOCKS_TAB = {
+            World.GRASS, World.DIRT, World.STONE, World.SAND, World.WOOD,
+            World.COAL_ORE, World.COPPER_ORE, World.IRON_ORE, World.GOLD_ORE,
+            World.DIAMOND_ORE, World.EMERALD_ORE, World.RUBY_ORE, World.SAPPHIRE_ORE,
+            World.PLANKS, World.TORCH, World.EMERALD_BLOCK,
+            World.BIRCH_WOOD, World.PINE_WOOD, World.ACACIA_WOOD, World.CHERRY_WOOD
+    };
+    private static final byte[] NATURE_TAB = {
+            World.SNOW, World.WOOL, World.LEAVES, World.BIRCH_LEAVES, World.PINE_LEAVES,
+            World.ACACIA_LEAVES, World.CHERRY_LEAVES,
+            World.RED_FLOWER, World.YELLOW_FLOWER, World.BLUE_FLOWER,
+            World.RED_MUSHROOM_SMALL, World.RED_MUSHROOM_MEDIUM, World.RED_MUSHROOM_LARGE,
+            World.BROWN_MUSHROOM_SMALL, World.BROWN_MUSHROOM_MEDIUM, World.BROWN_MUSHROOM_LARGE
+    };
+    private static final byte[] SPAWN_TAB = {
+            World.COD_SPAWN_EGG, World.SALMON_SPAWN_EGG, World.TROPICAL_FISH_SPAWN_EGG,
+            World.PIKE_SPAWN_EGG, World.CARP_SPAWN_EGG
     };
     private static final float[][] FLOWER_PARTS = {
             {0.44f, 0.00f, 0.44f, 0.56f, 0.69f, 0.56f, World.LEAVES},
@@ -136,7 +154,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private volatile boolean captured, paused, running = true;
     private volatile boolean inLobby = true;
     private volatile boolean inventoryOpen;
-    private boolean craftingTab;
+    private int inventoryTab;
     private int customizeSlot;
     private int selectedRecipe;
     private String craftMessage = "";
@@ -270,6 +288,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         for (Animal animal : animals) {
             if (animal.alive) animal.update(world, dt, animalRandom, aggressionLevel, playerX, playerZ, !creativeMode);
         }
+        breedAnimals();
         advanceEnvironment(dt);
         attackCooldown = Math.max(0, attackCooldown - dt);
         blockActionCooldown = Math.max(0, blockActionCooldown - dt);
@@ -450,6 +469,48 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         playerY = Math.max(1.5f, Math.min(World.HEIGHT - 2.0f, playerY));
     }
 
+    private void breedAnimals() {
+        for (int i = 0; i < animals.length; i++) {
+            Animal first = animals[i];
+            if (!first.canBreed()) continue;
+            for (int j = i + 1; j < animals.length; j++) {
+                Animal second = animals[j];
+                if (!second.canBreed() || first.kind != second.kind) continue;
+                float dx = first.x - second.x, dz = first.z - second.z;
+                float radius = first.kind.isFish() ? 2.8f : 2.2f;
+                if (dx * dx + dz * dz > radius * radius || Math.abs(first.y - second.y) > 1.5f) continue;
+
+                float babyX = (first.x + second.x) * 0.5f;
+                float babyZ = (first.z + second.z) * 0.5f;
+                int ground = world.heightAt((int) babyX, (int) babyZ);
+                float babyY;
+                if (first.kind.isFish()) {
+                    if (ground > World.WATER_LEVEL - 3) continue;
+                    babyY = Math.max(ground + 1.1f, World.WATER_LEVEL - 0.9f);
+                } else {
+                    if (ground <= World.WATER_LEVEL + 1 || world.get((int) babyX, ground + 1, (int) babyZ) != World.AIR
+                            || world.get((int) babyX, ground + 2, (int) babyZ) != World.AIR) continue;
+                    babyY = ground;
+                }
+
+                Animal baby = new Animal(first.kind, babyX, babyZ, babyY, animalRandom, true);
+                int freeSlot = -1;
+                for (int slot = 0; slot < animals.length; slot++) {
+                    if (!animals[slot].alive) { freeSlot = slot; break; }
+                }
+                if (freeSlot >= 0) animals[freeSlot] = baby;
+                else {
+                    if (animals.length >= MAX_ANIMALS) return;
+                    animals = Arrays.copyOf(animals, animals.length + 1);
+                    animals[animals.length - 1] = baby;
+                }
+                first.beginBreedingCooldown(45.0f);
+                second.beginBreedingCooldown(45.0f);
+                return;
+            }
+        }
+    }
+
     private void updateSurvivalVitals(float dt) {
         hunger = Math.max(0, hunger - 0.12f * dt);
         if (isHeadUnderwater()) oxygen = Math.max(0, oxygen - 14.0f * dt);
@@ -562,6 +623,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                         || solidAt(blockX, feetY + 0.90f, blockZ)
                         || solidAt(blockX, feetY + 1.65f, blockZ)
                         || solidAt(blockX, feetY + 1.78f, blockZ)) return false;
+            }
+        }
+        if (!creativeMode) {
+            for (Animal animal : animals) {
+                if (!animal.alive || animal.kind.isFish()) continue;
+                float radius = animal.collisionRadius() + 0.23f;
+                if (Math.abs(x - animal.x) < radius && Math.abs(z - animal.z) < radius
+                        && feetY < animal.y + animal.collisionHeight() && feetY + 1.8f > animal.y) return false;
             }
         }
         return true;
@@ -815,7 +884,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             float localDx = cos * dx - sin * dz;
             float localDz = sin * dx + cos * dz;
             float localOy = oy - animal.y, localDy = dy;
-            float modelScale = animal.kind.isFish() ? 1.35f : 1.0f;
+            float modelScale = (animal.kind.isFish() ? 1.35f : 1.0f) * animal.growth;
             for (Animal.Part part : animal.parts) {
                 float legSwing = part.gaitOffset == 0 ? 0 : (float) Math.sin(animal.gait + part.gaitOffset) * 0.10f * modelScale;
                 float jawDrop = part.animatedJaw ? animal.mouthOpening() * modelScale : 0;
@@ -1074,6 +1143,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         else if (type == World.PLANKS) { baseR = 175; baseG = 125; baseB = 75; }
         else if (type == World.TORCH) { baseR = 245; baseG = 166; baseB = 57; }
         else if (type == World.EMERALD_BLOCK) { baseR = 32; baseG = 154; baseB = 93; }
+        else if (type == World.WOOL) { baseR = 220; baseG = 214; baseB = 198; }
         else { baseR = 48; baseG = 122; baseB = 143; }
 
         float diffuse = Math.max(0, hit.nx * sunX + hit.ny * sunY + hit.nz * sunZ);
@@ -1209,110 +1279,6 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         if (!captured || paused) drawStartOverlay(g, cx, cy);
     }
 
-    private void drawHotbarDialogUnused(Graphics2D g, int panelX, int panelY) {
-        int cardY = panelY + 112, cardHeight = 455;
-        int leftX = panelX + 22, leftWidth = 300;
-        int rightX = panelX + 337, rightWidth = 612;
-        drawLobbyCard(g, leftX, cardY, leftWidth, cardHeight, "10 MIEJSC HOTBARA");
-        drawLobbyCard(g, rightX, cardY, rightWidth, cardHeight, "DOSTĘPNE BLOKI");
-
-        for (int slot = 0; slot < hotbar.length; slot++) {
-            int col = slot % 2, row = slot / 2;
-            int x = leftX + 12 + col * 137, y = cardY + 46 + row * 73;
-            g.setColor(new Color(8, 19, 22, 215));
-            g.fillRoundRect(x, y, 130, 64, 10, 10);
-            g.setColor(slot == customizeSlot ? new Color(238, 215, 143) : new Color(255, 255, 255, 65));
-            g.setStroke(new BasicStroke(slot == customizeSlot ? 2 : 1));
-            g.drawRoundRect(x, y, 130, 64, 10, 10);
-            drawBlockIcon(g, x + 3, y + 18, hotbar[slot]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.setColor(new Color(231, 237, 225));
-            g.drawString(slot == 9 ? "0" : Integer.toString(slot + 1), x + 5, y + 13);
-            String label = shorten(blockName(hotbar[slot]), 12);
-            g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.drawString(label, x + 39, y + 29);
-            if (!creativeMode) {
-                g.setFont(new Font("SansSerif", Font.PLAIN, 10));
-                g.setColor(new Color(176, 199, 182));
-                g.drawString("×" + inventory[hotbar[slot] & 0xff], x + 39, y + 46);
-            }
-        }
-
-        int gridX = rightX + 8, gridY = cardY + 43, tileWidth = 82, tileHeight = 64, xStep = 84, yStep = 69;
-        for (int i = 0; i < BLOCK_TYPES.length; i++) {
-            int col = i % 7, row = i / 7;
-            int x = gridX + col * xStep, y = gridY + row * yStep;
-            boolean selected = BLOCK_TYPES[i] == hotbar[customizeSlot];
-            g.setColor(new Color(8, 19, 22, 215));
-            g.fillRoundRect(x, y, tileWidth, tileHeight, 9, 9);
-            g.setColor(selected ? new Color(183, 214, 153) : new Color(255, 255, 255, 55));
-            g.setStroke(new BasicStroke(selected ? 1.7f : 1));
-            g.drawRoundRect(x, y, tileWidth, tileHeight, 9, 9);
-            drawBlockIcon(g, x + 2, y + 18, BLOCK_TYPES[i]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 9));
-            g.setColor(new Color(235, 239, 228));
-            g.drawString(shorten(blockName(BLOCK_TYPES[i]), 11), x + 36, y + 28);
-            if (!creativeMode) {
-                g.setFont(new Font("SansSerif", Font.PLAIN, 9));
-                g.setColor(new Color(176, 199, 182));
-                g.drawString("×" + inventory[BLOCK_TYPES[i] & 0xff], x + 36, y + 46);
-            }
-        }
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        g.setColor(new Color(204, 222, 208));
-        g.drawString("Wybierz miejsce hotbara, potem kliknij blok, który chcesz tam przypisać.",
-                panelX + 205, panelY + 602);
-    }
-
-    private void drawCraftingDialogUnused(Graphics2D g, int panelX, int panelY) {
-        String[] names = {"Deski", "Pochodnie", "Blok szmaragdu"};
-        String[] ingredients = {"1× dowolne drewno", "2× deski + 1× węgiel", "9× szmaragd"};
-        byte[] outputs = {World.PLANKS, World.TORCH, World.EMERALD_BLOCK};
-        int[] outputCounts = {4, 4, 1};
-        int startX = panelX + 24, cardY = panelY + 123, cardWidth = 296, cardHeight = 430;
-        for (int recipe = 0; recipe < names.length; recipe++) {
-            int x = startX + recipe * 310;
-            g.setColor(new Color(22, 39, 42, 232));
-            g.fillRoundRect(x, cardY, cardWidth, cardHeight, 18, 18);
-            g.setColor(recipe == selectedRecipe ? new Color(190, 219, 157) : new Color(255, 255, 255, 48));
-            g.setStroke(new BasicStroke(recipe == selectedRecipe ? 2 : 1));
-            g.drawRoundRect(x, cardY, cardWidth, cardHeight, 18, 18);
-            g.setFont(new Font("SansSerif", Font.BOLD, 18));
-            g.setColor(new Color(238, 243, 231));
-            g.drawString(names[recipe], x + 20, cardY + 53);
-            g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-            g.setColor(new Color(185, 205, 190));
-            g.drawString("Składniki:", x + 20, cardY + 101);
-            g.setFont(new Font("SansSerif", Font.BOLD, 14));
-            g.setColor(new Color(228, 232, 213));
-            g.drawString(ingredients[recipe], x + 20, cardY + 127);
-            g.setColor(new Color(255, 255, 255, 36));
-            g.drawLine(x + 20, cardY + 152, x + cardWidth - 20, cardY + 152);
-            g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-            g.setColor(new Color(185, 205, 190));
-            g.drawString("Wynik:", x + 20, cardY + 183);
-            drawBlockIcon(g, x + 36, cardY + 211, outputs[recipe]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 16));
-            g.setColor(new Color(236, 241, 226));
-            g.drawString(blockName(outputs[recipe]) + " ×" + outputCounts[recipe], x + 81, cardY + 245);
-
-            boolean available = creativeMode || canCraftRecipe(recipe);
-            int buttonY = cardY + 340;
-            g.setColor(available ? new Color(105, 159, 83) : new Color(75, 82, 77));
-            g.fillRoundRect(x + 20, buttonY, cardWidth - 40, 50, 13, 13);
-            g.setColor(available ? new Color(194, 232, 167) : new Color(141, 149, 141));
-            g.drawRoundRect(x + 20, buttonY, cardWidth - 40, 50, 13, 13);
-            g.setFont(new Font("SansSerif", Font.BOLD, 15));
-            g.setColor(new Color(245, 247, 238));
-            String button = available ? "WYTWÓRZ" : "BRAK SKŁADNIKÓW";
-            g.drawString(button, x + (cardWidth - g.getFontMetrics().stringWidth(button)) / 2, buttonY + 31);
-        }
-        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g.setColor(new Color(207, 225, 208));
-        g.drawString(craftMessage.isEmpty() ? "Wybierz recepturę i naciśnij WYTWÓRZ." : craftMessage,
-                panelX + 26, panelY + 603);
-    }
-
     private void drawInventoryDialog(Graphics2D g, int cx, int cy) {
         g.setColor(new Color(4, 10, 15, 175));
         g.fillRect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -1328,27 +1294,37 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         g.drawString(title, cx - g.getFontMetrics().stringWidth(title) / 2, y + 39);
 
         int tabY = y + 55;
-        drawLobbyModeButton(g, x + 25, tabY, 175, 36, "HOTBAR", !craftingTab);
-        drawLobbyModeButton(g, x + 212, tabY, 175, 36, "CRAFTING", craftingTab);
+        String[] tabs = {"BLOKI", "NATURA", "SPAWN", "CRAFTING"};
+        for (int i = 0; i < tabs.length; i++) {
+            drawLobbyModeButton(g, x + 24 + i * 208, tabY, 200, 36, tabs[i], inventoryTab == i);
+        }
         g.setColor(new Color(163, 186, 169));
         g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        g.drawString("ESC / E — zamknij", x + 700, tabY + 23);
+        g.drawString("ESC / E — zamknij", x + 850, tabY + 23);
         g.setColor(new Color(131, 59, 63));
         g.fillRoundRect(x + INVENTORY_WIDTH - 51, y + 15, 34, 32, 9, 9);
         g.setColor(Color.WHITE);
         g.setFont(new Font("SansSerif", Font.BOLD, 20));
         g.drawString("×", x + INVENTORY_WIDTH - 41, y + 38);
 
-        if (craftingTab) drawCraftingDialog(g, x, y);
-        else drawHotbarDialog(g, x, y);
+        if (inventoryTab == 3) drawCraftingDialog(g, x, y);
+        else drawHotbarDialog(g, x, y, inventoryItems(inventoryTab), tabs[inventoryTab]);
     }
 
-    private void drawHotbarDialog(Graphics2D g, int panelX, int panelY) {
+    private byte[] inventoryItems(int tab) {
+        return switch (tab) {
+            case 0 -> BLOCKS_TAB;
+            case 1 -> NATURE_TAB;
+            default -> SPAWN_TAB;
+        };
+    }
+
+    private void drawHotbarDialog(Graphics2D g, int panelX, int panelY, byte[] items, String category) {
         int cardY = panelY + 112, cardHeight = 455;
         int leftX = panelX + 22, leftWidth = 300;
         int rightX = panelX + 337, rightWidth = 612;
         drawLobbyCard(g, leftX, cardY, leftWidth, cardHeight, "10 MIEJSC HOTBARA");
-        drawLobbyCard(g, rightX, cardY, rightWidth, cardHeight, "DOSTĘPNE BLOKI");
+        drawLobbyCard(g, rightX, cardY, rightWidth, cardHeight, "DOSTĘPNE: " + category);
 
         for (int slot = 0; slot < hotbar.length; slot++) {
             int col = slot % 2, row = slot / 2;
@@ -1372,24 +1348,24 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             }
         }
 
-        int gridX = rightX + 8, gridY = cardY + 43, tileWidth = 96, tileHeight = 64, xStep = 100, yStep = 69;
-        for (int i = 0; i < BLOCK_TYPES.length; i++) {
-            int col = i % 6, row = i / 6;
+        int gridX = rightX + 8, gridY = cardY + 43, tileWidth = 112, tileHeight = 64, xStep = 116, yStep = 70;
+        for (int i = 0; i < items.length; i++) {
+            int col = i % 5, row = i / 5;
             int x = gridX + col * xStep, y = gridY + row * yStep;
-            boolean selected = BLOCK_TYPES[i] == hotbar[customizeSlot];
+            boolean selected = items[i] == hotbar[customizeSlot];
             g.setColor(new Color(8, 19, 22, 215));
             g.fillRoundRect(x, y, tileWidth, tileHeight, 9, 9);
             g.setColor(selected ? new Color(183, 214, 153) : new Color(255, 255, 255, 55));
             g.setStroke(new BasicStroke(selected ? 1.7f : 1));
             g.drawRoundRect(x, y, tileWidth, tileHeight, 9, 9);
-            drawBlockIcon(g, x, y + 18, BLOCK_TYPES[i]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 8));
+            drawBlockIcon(g, x + 7, y + 18, items[i]);
+            g.setFont(new Font("SansSerif", Font.BOLD, 9));
             g.setColor(new Color(235, 239, 228));
-            g.drawString(shorten(blockName(BLOCK_TYPES[i]), 9), x + 34, y + 27);
+            g.drawString(shorten(blockName(items[i]), 13), x + 43, y + 27);
             if (!creativeMode) {
-                g.setFont(new Font("SansSerif", Font.PLAIN, 8));
+                g.setFont(new Font("SansSerif", Font.PLAIN, 9));
                 g.setColor(new Color(176, 199, 182));
-                g.drawString("×" + inventory[BLOCK_TYPES[i] & 0xff], x + 34, y + 45);
+                g.drawString("×" + inventory[items[i] & 0xff], x + 43, y + 45);
             }
         }
         g.setFont(new Font("SansSerif", Font.PLAIN, 12));
@@ -1488,9 +1464,13 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             return;
         }
         int tabY = y + 55;
-        if (inside(mouseX, mouseY, x + 25, tabY, 175, 36)) { craftingTab = false; return; }
-        if (inside(mouseX, mouseY, x + 212, tabY, 175, 36)) { craftingTab = true; return; }
-        if (craftingTab) {
+        for (int tab = 0; tab < 4; tab++) {
+            if (inside(mouseX, mouseY, x + 24 + tab * 208, tabY, 200, 36)) {
+                inventoryTab = tab;
+                return;
+            }
+        }
+        if (inventoryTab == 3) {
             int startX = x + 24, cardY = y + 123, cardWidth = 296, buttonY = cardY + 340;
             for (int recipe = 0; recipe < 3; recipe++) {
                 int cardX = startX + recipe * 310;
@@ -1519,10 +1499,11 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             }
         }
         int catalogX = x + 337 + 8, catalogY = cardY + 43;
-        for (int i = 0; i < BLOCK_TYPES.length; i++) {
-            int tileX = catalogX + (i % 7) * 84, tileY = catalogY + (i / 7) * 69;
-            if (inside(mouseX, mouseY, tileX, tileY, 82, 64)) {
-                hotbar[customizeSlot] = BLOCK_TYPES[i];
+        byte[] items = inventoryItems(inventoryTab);
+        for (int i = 0; i < items.length; i++) {
+            int tileX = catalogX + (i % 5) * 116, tileY = catalogY + (i / 5) * 70;
+            if (inside(mouseX, mouseY, tileX, tileY, 112, 64)) {
+                hotbar[customizeSlot] = items[i];
                 selectedBlock = customizeSlot;
                 return;
             }
@@ -2011,6 +1992,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         if (type == World.CHERRY_LEAVES) return new Color(224, 135, 173);
         if (type == World.PLANKS) return new Color(175, 125, 75);
         if (type == World.TORCH) return new Color(245, 166, 57);
+        if (type == World.WOOL) return new Color(220, 214, 198);
         return new Color(32, 154, 93);
     }
 
@@ -2090,7 +2072,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         if (!place && aimedAnimalEntity != null) {
             if (attackCooldown > 0 || aimedAnimalDistance > 5.5f || !aimedAnimalEntity.alive) return;
             attackCooldown = 0.35f;
-            if (aimedAnimalEntity.takeHit() && !creativeMode) meatCount = Math.min(99, meatCount + aimedAnimalEntity.meatDrop);
+            if (aimedAnimalEntity.takeHit() && !creativeMode) {
+                meatCount = Math.min(99, meatCount + aimedAnimalEntity.meatDrop);
+                if (aimedAnimalEntity.kind == Animal.Kind.SHEEP) {
+                    inventory[World.WOOL] = Math.min(999, inventory[World.WOOL] + 1);
+                }
+                byte spawnEgg = aimedAnimalEntity.spawnEggDrop();
+                if (spawnEgg != World.AIR) inventory[spawnEgg] = Math.min(999, inventory[spawnEgg] + 1);
+            }
             return;
         }
         if (!hasHit || hitY < 0 || hitX < 0 || hitZ < 0 || hitX >= World.WIDTH || hitZ >= World.DEPTH) return;

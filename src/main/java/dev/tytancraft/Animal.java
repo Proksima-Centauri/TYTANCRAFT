@@ -68,14 +68,20 @@ final class Animal {
     final int meatDrop;
     int health;
     boolean alive = true;
-    float x, y, z, yaw, gait, verticalVelocity;
-    private float targetX, targetZ, pause, mouthPhase;
+    float x, y, z, yaw, gait, verticalVelocity, growth = 1.0f;
+    private float targetX, targetZ, pause, mouthPhase, breedingCooldown;
 
     Animal(Kind kind, float x, float z, float groundHeight, Random random) {
+        this(kind, x, z, groundHeight, random, false);
+    }
+
+    Animal(Kind kind, float x, float z, float groundHeight, Random random, boolean baby) {
         this.kind = kind;
         this.x = x;
         this.z = z;
         y = kind.isFish() ? groundHeight : groundHeight + 1.0f;
+        growth = baby ? 0.55f : 1.0f;
+        breedingCooldown = baby ? 45.0f : 8.0f + random.nextFloat() * 12.0f;
         health = kind == Kind.BOAR ? 4 : kind == Kind.DEER || kind == Kind.FOX ? 3
                 : kind.isFish() || kind == Kind.RABBIT || kind == Kind.CHICKEN ? 1 : 2;
         meatDrop = kind == Kind.BOAR ? 4 : kind == Kind.DEER ? 3
@@ -84,13 +90,41 @@ final class Animal {
         mouthPhase = random.nextFloat() * (float) (Math.PI * 2);
         targetX = x;
         targetZ = z;
-        pause = random.nextFloat() * 2.0f;
+        pause = baby ? 1.0f + random.nextFloat() * 2.0f : random.nextFloat() * 2.0f;
         parts = createParts(kind);
     }
+
+    boolean canBreed() { return alive && breedingCooldown <= 0 && growth >= 1.0f; }
+
+    void beginBreedingCooldown(float seconds) { breedingCooldown = seconds; }
 
     float mouthOpening() {
         if (kind != Kind.CARP) return 0;
         return 0.02f + 0.14f * (0.5f + 0.5f * (float) Math.sin(gait * 1.1f + mouthPhase));
+    }
+
+    float collisionRadius() {
+        float radius = switch (kind) {
+            case DEER -> 0.58f;
+            case BOAR -> 0.78f;
+            case FOX -> 0.52f;
+            case SHEEP, PIG -> 0.46f;
+            case CHICKEN, RABBIT -> 0.34f;
+            default -> 0;
+        };
+        return radius * growth;
+    }
+
+    float collisionHeight() {
+        float height = switch (kind) {
+            case DEER -> 1.9f;
+            case BOAR -> 1.15f;
+            case SHEEP -> 1.05f;
+            case PIG, FOX, RABBIT -> 1.1f;
+            case CHICKEN -> 1.05f;
+            default -> 0;
+        };
+        return height * growth;
     }
 
     boolean takeHit() {
@@ -100,8 +134,21 @@ final class Animal {
         return !alive;
     }
 
+    byte spawnEggDrop() {
+        return switch (kind) {
+            case COD -> World.COD_SPAWN_EGG;
+            case SALMON -> World.SALMON_SPAWN_EGG;
+            case TROPICAL_FISH -> World.TROPICAL_FISH_SPAWN_EGG;
+            case PIKE -> World.PIKE_SPAWN_EGG;
+            case CARP -> World.CARP_SPAWN_EGG;
+            default -> World.AIR;
+        };
+    }
+
     void update(World world, float dt, Random random, int aggression,
                 float playerX, float playerZ, boolean survival) {
+        breedingCooldown = Math.max(0, breedingCooldown - dt);
+        growth = Math.min(1.0f, growth + dt / 35.0f);
         if (kind.isFish()) {
             gait += dt * kind.speed * 8.0f;
             updateFish(world, dt, random);
@@ -311,20 +358,23 @@ final class Animal {
         }
         if (kind == Kind.BOAR) {
             return new Part[]{
-                    new Part(-0.36f, 0.30f, -0.45f, 0.36f, 0.92f, 0.38f, 0x58463b),
-                    new Part(-0.25f, 0.53f, 0.30f, 0.25f, 1.00f, 0.65f, 0x705545),
-                    new Part(-0.17f, 0.48f, 0.61f, 0.17f, 0.73f, 0.83f, 0xa18870),
-                    new Part(-0.14f, 0.40f, 0.72f, -0.08f, 0.54f, 0.79f, 0xe4d7ba),
-                    new Part(0.08f, 0.40f, 0.72f, 0.14f, 0.54f, 0.79f, 0xe4d7ba),
-                    new Part(-0.27f, 0.91f, 0.42f, -0.12f, 1.08f, 0.54f, 0x594336),
-                    new Part(0.12f, 0.91f, 0.42f, 0.27f, 1.08f, 0.54f, 0x594336),
-                    new Part(-0.18f, 0.81f, -0.16f, 0.18f, 1.04f, 0.30f, 0x44352e),
-                    new Part(-0.25f, 0.72f, 0.64f, -0.19f, 0.78f, 0.68f, 0x211c19),
-                    new Part(0.19f, 0.72f, 0.64f, 0.25f, 0.78f, 0.68f, 0x211c19),
-                    new Part(-0.26f, 0.0f, -0.34f, -0.13f, 0.40f, -0.20f, 0x473830, -0.7f),
-                    new Part(0.13f, 0.0f, -0.34f, 0.26f, 0.40f, -0.20f, 0x473830, 0.7f),
-                    new Part(-0.26f, 0.0f, 0.16f, -0.13f, 0.40f, 0.30f, 0x473830, 0.7f),
-                    new Part(0.13f, 0.0f, 0.16f, 0.26f, 0.40f, 0.30f, 0x473830, -0.7f)
+                    new Part(-0.29f, 0.34f, -0.39f, 0.29f, 0.79f, 0.30f, 0x995c35),
+                    new Part(-0.21f, 0.50f, 0.23f, 0.21f, 0.90f, 0.60f, 0xb87749),
+                    new Part(-0.14f, 0.43f, 0.56f, 0.14f, 0.67f, 0.80f, 0xd0a77e),
+                    new Part(-0.23f, 0.81f, 0.27f, -0.16f, 0.98f, 0.43f, 0x865033),
+                    new Part(0.16f, 0.81f, 0.27f, 0.23f, 0.98f, 0.43f, 0x865033),
+                    new Part(-0.27f, 0.37f, 0.68f, -0.14f, 0.53f, 0.92f, 0xfff1c9),
+                    new Part(0.14f, 0.37f, 0.68f, 0.27f, 0.53f, 0.92f, 0xfff1c9),
+                    new Part(-0.24f, 0.49f, 0.80f, -0.14f, 0.68f, 0.97f, 0xfff1c9),
+                    new Part(0.14f, 0.49f, 0.80f, 0.24f, 0.68f, 0.97f, 0xfff1c9),
+                    new Part(-0.13f, 0.69f, 0.565f, -0.08f, 0.75f, 0.60f, 0x211c19),
+                    new Part(0.08f, 0.69f, 0.565f, 0.13f, 0.75f, 0.60f, 0x211c19),
+                    new Part(-0.18f, 0.76f, -0.18f, 0.18f, 0.96f, 0.25f, 0x68452f),
+                    new Part(-0.23f, 0.0f, -0.30f, -0.12f, 0.40f, -0.17f, 0x453329, -0.7f),
+                    new Part(0.12f, 0.0f, -0.30f, 0.23f, 0.40f, -0.17f, 0x453329, 0.7f),
+                    new Part(-0.23f, 0.0f, 0.12f, -0.12f, 0.40f, 0.27f, 0x453329, 0.7f),
+                    new Part(0.12f, 0.0f, 0.12f, 0.23f, 0.40f, 0.27f, 0x453329, -0.7f),
+                    new Part(-0.07f, 0.47f, 0.78f, 0.07f, 0.55f, 0.83f, 0x49342a)
             };
         }
         if (kind.isFish()) return createFishParts(kind);
