@@ -5,10 +5,10 @@ import java.awt.Canvas;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
-import java.awt.Polygon;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
 import java.awt.RenderingHints;
 import java.awt.Robot;
-import java.awt.Shape;
 import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
@@ -29,6 +29,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.stream.IntStream;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 
@@ -43,7 +45,30 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private static final int INVENTORY_HEIGHT = 630;
     private static final int INVENTORY_PANEL_X = (WINDOW_WIDTH - INVENTORY_WIDTH) / 2;
     private static final int INVENTORY_PANEL_Y = (WINDOW_HEIGHT - INVENTORY_HEIGHT) / 2;
+    private static final int CRAFT_GRID_X = 80, CRAFT_GRID_Y = 145, CRAFT_SLOT_SIZE = 62, CRAFT_SLOT_GAP = 4;
+    private static final int CRAFT_OUTPUT_X = 475, CRAFT_OUTPUT_SIZE = 72;
+    private static final int CRAFT_RECIPE_X = 620, CRAFT_RECIPE_Y = 140, CRAFT_RECIPE_STEP = 98;
+    private static final int CRAFT_RECIPE_WIDTH = 90, CRAFT_RECIPE_HEIGHT = 72;
+    private static final int CRAFT_INVENTORY_TOP = 365, CRAFT_HOTBAR_TOP = 567;
+    private static final int CRAFT_INVENTORY_SLOT_SIZE = 62, CRAFT_INVENTORY_GAP = 4;
+    private static final byte[] CRAFT_OUTPUTS = {World.PLANKS, World.TORCH, World.EMERALD_BLOCK};
+    private static final int[] CRAFT_OUTPUT_COUNTS = {4, 4, 1};
+    private static final String[] CRAFT_RECIPE_NAMES = {"Deski", "Pochodnie", "Blok szmaragdu"};
     private static final int MAX_ANIMALS = 128;
+    private static final int MAX_ANIMALS_PER_KIND = 10;
+    private static final int LOBBY_CARD_WIDTH = 296;
+    private static final int LOBBY_CARD_HEIGHT = 395;
+    private static final int LOBBY_NICKNAME_X = 17, LOBBY_NICKNAME_Y = 69;
+    private static final int LOBBY_NICKNAME_WIDTH = 262, LOBBY_NICKNAME_HEIGHT = 51;
+    private static final int LOBBY_MODE_Y = 65, LOBBY_MODE_HEIGHT = 34;
+    private static final int LOBBY_SURVIVAL_X = 17, LOBBY_SURVIVAL_WIDTH = 122;
+    private static final int LOBBY_CREATIVE_X = 151, LOBBY_CREATIVE_WIDTH = 128;
+    private static final int LOBBY_SLIDER_X = 33, LOBBY_SLIDER_WIDTH = 256;
+    private static final int LOBBY_AGGRESSION_Y = 211, LOBBY_DAY_SPEED_Y = 273, LOBBY_RENDER_DISTANCE_Y = 341;
+    private static final int LOBBY_SAVED_LIST_Y = 229, LOBBY_SAVED_ROW_STEP = 31, LOBBY_SAVED_ROW_HEIGHT = 28;
+    private static final int LOBBY_START_BUTTON_WIDTH = 330, LOBBY_START_BUTTON_HEIGHT = 63;
+    private static final int MAX_RAIN_SPLASHES = 64;
+    private static final BasicStroke RAIN_SPLASH_STROKE = new BasicStroke(1.2f);
     private static final float FOV = (float) Math.toRadians(76);
     private static final int RENDER_DISTANCE_UNIT = 16;
     private static final float INTERACTION_REACH = 5.5f;
@@ -64,23 +89,20 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             World.RED_MUSHROOM_SMALL, World.RED_MUSHROOM_MEDIUM, World.RED_MUSHROOM_LARGE,
             World.BROWN_MUSHROOM_SMALL, World.BROWN_MUSHROOM_MEDIUM, World.BROWN_MUSHROOM_LARGE,
             World.COD_SPAWN_EGG, World.SALMON_SPAWN_EGG, World.TROPICAL_FISH_SPAWN_EGG,
-            World.PIKE_SPAWN_EGG, World.CARP_SPAWN_EGG, World.WOOL
+            World.PIKE_SPAWN_EGG, World.CARP_SPAWN_EGG, World.WOOL, World.LADDER
     };
-    private static final String[] BLOCK_NAMES = {
-            "Trawa", "Ziemia", "Kamień", "Piasek", "Drewno", "Liście", "Węgiel", "Miedź",
-            "Żelazo", "Złoto", "Diament", "Szmaragd", "Rubin", "Szafir", "Śnieg",
-            "Mak", "Jaskier", "Chaber", "Drewno brzozy", "Liście brzozy", "Drewno świerku",
-            "Igły świerku", "Drewno akacji", "Liście akacji", "Drewno wiśni", "Liście wiśni",
-            "Deski", "Pochodnia", "Blok szmaragdu", "Mały muchomor", "Średni muchomor",
-            "Duży muchomor", "Mały grzyb jadalny", "Średni grzyb jadalny", "Duży grzyb jadalny",
-            "Ikra dorsza", "Ikra łososia", "Ikra tropikalna", "Ikra szczupaka", "Ikra karpia", "Wełna"
-    };
+    private static final Font[][] UI_FONTS = createUiFonts();
+    private static final Font MONOSPACED_BOLD_14 = new Font(Font.MONOSPACED, Font.BOLD, 14);
+    private static final Font MONOSPACED_BOLD_34 = new Font(Font.MONOSPACED, Font.BOLD, 34);
+    private static final Font MONOSPACED_PLAIN_12 = new Font(Font.MONOSPACED, Font.PLAIN, 12);
+    private static final int[] COLOR_CACHE_KEYS = new int[512];
+    private static final Color[] COLOR_CACHE = new Color[COLOR_CACHE_KEYS.length];
     private static final byte[] BLOCKS_TAB = {
             World.GRASS, World.DIRT, World.STONE, World.SAND, World.WOOD,
             World.COAL_ORE, World.COPPER_ORE, World.IRON_ORE, World.GOLD_ORE,
             World.DIAMOND_ORE, World.EMERALD_ORE, World.RUBY_ORE, World.SAPPHIRE_ORE,
             World.PLANKS, World.TORCH, World.EMERALD_BLOCK,
-            World.BIRCH_WOOD, World.PINE_WOOD, World.ACACIA_WOOD, World.CHERRY_WOOD
+            World.BIRCH_WOOD, World.PINE_WOOD, World.ACACIA_WOOD, World.CHERRY_WOOD, World.LADDER
     };
     private static final byte[] NATURE_TAB = {
             World.SNOW, World.WOOL, World.LEAVES, World.BIRCH_LEAVES, World.PINE_LEAVES,
@@ -115,22 +137,31 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             {0.37f, 0.00f, 0.37f, 0.63f, 0.52f, 0.63f, World.SNOW},
             {0.06f, 0.48f, 0.06f, 0.94f, 0.94f, 0.94f, 0}
     };
+    private static final float[][] LADDER_Z_POS_PARTS = createLadderParts(false, true);
+    private static final float[][] LADDER_Z_NEG_PARTS = createLadderParts(false, false);
+    private static final float[][] LADDER_X_POS_PARTS = createLadderParts(true, true);
+    private static final float[][] LADDER_X_NEG_PARTS = createLadderParts(true, false);
     private static final int CLOUD_SIZE = 128;
     private static final float[] CLOUD_MAP = createCloudMap();
 
     private enum Weather { CLEAR, CLOUDY, RAIN }
 
-    private final World world;
-    private final int spawnX, spawnZ;
+    private World world;
+    private int spawnX, spawnZ;
     private Animal[] animals;
     private final Animal[] visibleAnimals = new Animal[MAX_ANIMALS];
-    private final Random animalRandom;
-    private final Random weatherRandom;
-    private final Hit traceScratch = new Hit();
-    private final Hit underwaterTraceScratch = new Hit();
+    private final float[] visibleAnimalCos = new float[MAX_ANIMALS];
+    private final float[] visibleAnimalSin = new float[MAX_ANIMALS];
+    private final int[] animalPopulationScratch = new int[Animal.Kind.values().length];
+    private Random animalRandom;
+    private Random weatherRandom;
+    private final Hit[] traceScratch = newHitScratch(VIEW_HEIGHT);
+    private final Hit[] underwaterTraceScratch = newHitScratch(VIEW_HEIGHT);
+    private final AnimalHit[] animalHitScratch = newAnimalHitScratch(VIEW_HEIGHT);
     private final BufferedImage scene = new BufferedImage(VIEW_WIDTH, VIEW_HEIGHT, BufferedImage.TYPE_INT_RGB);
     private final int[] pixels = ((DataBufferInt) scene.getRaster().getDataBuffer()).getData();
     private final boolean[] keys = new boolean[512];
+    private final ConcurrentLinkedQueue<Runnable> pendingActions = new ConcurrentLinkedQueue<>();
     private final float[] columnX = new float[VIEW_WIDTH];
     private final float[] columnY = new float[VIEW_HEIGHT];
     private final int[] inventory = new int[48];
@@ -138,7 +169,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             GRASS_BLOCK, DIRT_BLOCK, STONE_BLOCK, SAND_BLOCK, WOOD_BLOCK,
             World.COAL_ORE, World.IRON_ORE, World.COPPER_ORE, World.SNOW, World.RED_FLOWER
     };
-    private final long seed;
+    private long seed;
     private float playerX, playerY, playerZ, verticalVelocity;
     private volatile float yaw = 0.15f, pitch = -0.05f;
     private volatile int selectedBlock;
@@ -154,6 +185,12 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private volatile boolean captured, paused, running = true;
     private volatile boolean inLobby = true;
     private volatile boolean inventoryOpen;
+    private volatile boolean saveRequested;
+    private volatile String saveMessage = "";
+    private volatile float saveMessageTimer;
+    private volatile List<WorldStorage.SaveInfo> savedWorlds = List.of();
+    private int savedWorldOffset;
+    private boolean loadedSave;
     private int inventoryTab;
     private int customizeSlot;
     private int selectedRecipe;
@@ -172,6 +209,8 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private float hunger = 100, oxygen = 100;
     private int meatCount;
     private float damageCooldown, attackCooldown, blockActionCooldown;
+    private final ArrayList<RainSplash> rainSplashes = new ArrayList<>(MAX_RAIN_SPLASHES);
+    private float rainSplashTimer;
     private float dayTime = 0.5f, daylight = 1.0f, sunlight = 1.0f;
     private float sunX, sunY = 1, sunZ = 0.25f;
     private Weather weather = Weather.CLEAR;
@@ -182,12 +221,19 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private long lastNativeMouseEvent;
     private Robot robot;
     private Thread gameThread;
+    private JFrame window;
+    private GraphicsDevice graphicsDevice;
+    private boolean fullScreen;
     private java.awt.Point windowCenter;
     private java.awt.Cursor hiddenCursor;
 
     private TytanCraft(long seed) {
+        this(seed, new World(seed));
+    }
+
+    private TytanCraft(long seed, World world) {
         this.seed = seed;
-        world = new World(seed);
+        this.world = world;
         int[] spawn = world.findDrySpawn();
         spawnX = spawn[0];
         spawnZ = spawn[1];
@@ -207,16 +253,22 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         addMouseWheelListener(this);
         setFocusable(true);
         initializeViewRays();
+        refreshSavedWorlds();
+        BlockRenderAssets.prefetch(BLOCK_TYPES);
     }
 
     public static void main(String[] args) {
         long seed = args.length == 0 ? new Random().nextLong() : parseSeed(args[0]);
+        World world = new World(seed);
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("TytanCraft — Dzika Dolina");
-            TytanCraft game = new TytanCraft(seed);
+            TytanCraft game = new TytanCraft(seed, world);
+            game.window = frame;
+            game.graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
             frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
             frame.addWindowListener(new WindowAdapter() {
                 @Override public void windowClosing(WindowEvent event) {
+                    game.releaseFullScreen();
                     game.stopGame();
                     frame.dispose();
                 }
@@ -241,6 +293,57 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         }
     }
 
+    private void toggleFullScreen() {
+        if (window == null || graphicsDevice == null) return;
+        synchronized (this) {
+            boolean entering = !fullScreen;
+            boolean recapture = captured;
+            if (recapture) {
+                captured = false;
+                setCursor(java.awt.Cursor.getDefaultCursor());
+            }
+            try {
+                if (fullScreen) graphicsDevice.setFullScreenWindow(null);
+                window.dispose();
+                window.setUndecorated(entering);
+                if (entering) window.setBounds(graphicsDevice.getDefaultConfiguration().getBounds());
+                else {
+                    window.pack();
+                    window.setLocationRelativeTo(null);
+                }
+                window.setVisible(true);
+                if (entering) graphicsDevice.setFullScreenWindow(window);
+                fullScreen = entering;
+                recreateBufferStrategy();
+                if (recapture) captureMouse();
+                else requestFocusInWindow();
+            } catch (RuntimeException failure) {
+                try {
+                    graphicsDevice.setFullScreenWindow(null);
+                    window.dispose();
+                    window.setUndecorated(false);
+                    window.pack();
+                    window.setLocationRelativeTo(null);
+                    window.setVisible(true);
+                    fullScreen = false;
+                    recreateBufferStrategy();
+                    if (recapture) captureMouse();
+                    else requestFocusInWindow();
+                } catch (RuntimeException ignored) {
+                    fullScreen = false;
+                }
+                saveMessage = "Nie można przełączyć trybu pełnoekranowego";
+                saveMessageTimer = 4.0f;
+            }
+        }
+    }
+
+    private void releaseFullScreen() {
+        if (!fullScreen || graphicsDevice == null) return;
+        graphicsDevice.setFullScreenWindow(null);
+        fullScreen = false;
+    }
+
     private void stopGame() {
         running = false;
         if (gameThread != null && gameThread != Thread.currentThread()) {
@@ -250,6 +353,8 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 Thread.currentThread().interrupt();
             }
         }
+        releaseFullScreen();
+        if (!inLobby) saveWorldNow();
     }
 
     private void initializeViewRays() {
@@ -259,11 +364,24 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private void start() {
-        createBufferStrategy(2);
+        synchronized (this) {
+            if (getBufferStrategy() == null) createBufferStrategy(2);
+        }
         long previous = System.nanoTime();
         double accumulator = 0;
         final double step = 1.0 / 60.0;
-        while (running && isDisplayable()) {
+        while (running) {
+            if (!isDisplayable()) {
+                previous = System.nanoTime();
+                accumulator = 0;
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                continue;
+            }
             long now = System.nanoTime();
             accumulator += Math.min(0.1, (now - previous) / 1_000_000_000.0);
             previous = now;
@@ -284,12 +402,21 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private void update(float dt) {
+        Runnable action;
+        while ((action = pendingActions.poll()) != null) action.run();
+        if (saveRequested) {
+            saveRequested = false;
+            saveWorldNow();
+        }
+        if (saveMessageTimer > 0) saveMessageTimer = Math.max(0, saveMessageTimer - dt);
         if (inLobby || inventoryOpen || paused || !captured) return;
         for (Animal animal : animals) {
             if (animal.alive) animal.update(world, dt, animalRandom, aggressionLevel, playerX, playerZ, !creativeMode);
         }
         breedAnimals();
+        world.tickWaterFlow();
         advanceEnvironment(dt);
+        updateRainSplashes(dt);
         attackCooldown = Math.max(0, attackCooldown - dt);
         blockActionCooldown = Math.max(0, blockActionCooldown - dt);
         if (creativeMode) {
@@ -300,8 +427,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         }
         damageCooldown = Math.max(0, damageCooldown - dt);
         boolean swimming = isInWater();
+        boolean climbing = !swimming && isOnLadder();
         float forward = (pressed(KeyEvent.VK_W) ? 1 : 0) - (pressed(KeyEvent.VK_S) ? 1 : 0);
         float strafe = (pressed(KeyEvent.VK_D) ? 1 : 0) - (pressed(KeyEvent.VK_A) ? 1 : 0);
+        if (climbing) forward = 0;
         float length = (float) Math.sqrt(forward * forward + strafe * strafe);
         if (length > 0) {
             forward /= length;
@@ -316,7 +445,12 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             tryMoveZ(dz, !swimming && movingForward, swimming && movingForward && pressed(KeyEvent.VK_SPACE));
         }
 
-        if (swimming) {
+        climbing = !swimming && isOnLadder();
+        if (climbing) {
+            if (pressed(KeyEvent.VK_W) || pressed(KeyEvent.VK_SPACE)) verticalVelocity = 3.0f;
+            else if (pressed(KeyEvent.VK_S) || pressed(KeyEvent.VK_CONTROL)) verticalVelocity = -3.0f;
+            else verticalVelocity = 0;
+        } else if (swimming) {
             if (pressed(KeyEvent.VK_SPACE)) verticalVelocity = Math.min(3.6f, verticalVelocity + 13.0f * dt);
             else if (pressed(KeyEvent.VK_CONTROL)) verticalVelocity = Math.max(-3.0f, verticalVelocity - 13.0f * dt);
             else {
@@ -407,14 +541,53 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         return edge < 0.09f ? 0.72f : 1.0f;
     }
 
+    private void updateRainSplashes(float dt) {
+        for (int i = rainSplashes.size() - 1; i >= 0; i--) {
+            RainSplash splash = rainSplashes.get(i);
+            splash.age += dt;
+            if (splash.age >= (splash.onWater ? 0.48f : 0.34f)) rainSplashes.remove(i);
+        }
+        if (rainIntensity < 0.08f) return;
+        rainSplashTimer -= dt * rainIntensity;
+        if (rainSplashTimer <= 0) {
+            rainSplashTimer = 0.07f + weatherRandom.nextFloat() * 0.11f;
+            spawnRainSplash();
+        }
+    }
+
+    private void spawnRainSplash() {
+        float angle = yaw + (weatherRandom.nextFloat() - 0.5f) * 1.35f;
+        float distance = 4.0f + weatherRandom.nextFloat() * 21.0f;
+        int x = (int) Math.floor(playerX + 0.5f + (float) Math.sin(angle) * distance);
+        int z = (int) Math.floor(playerZ + 0.5f + (float) Math.cos(angle) * distance);
+        if (x < 1 || z < 1 || x >= World.WIDTH - 1 || z >= World.DEPTH - 1) return;
+
+        boolean onWater = world.get(x, World.WATER_LEVEL, z) == World.WATER;
+        int surfaceY = onWater ? World.WATER_LEVEL : world.canopyHeightAt(x, z);
+        if (!onWater && !World.isSolid(world.get(x, surfaceY, z))) return;
+        if (!cloudAbovePosition(x + 0.5f, z + 0.5f)) return;
+
+        if (rainSplashes.size() == MAX_RAIN_SPLASHES) rainSplashes.remove(0);
+        rainSplashes.add(new RainSplash(x + 0.5f, surfaceY + 1.0f, z + 0.5f,
+                onWater, weatherRandom.nextInt()));
+    }
+
+    private boolean cloudAbovePosition(float x, float z) {
+        float dx = x - playerX, dz = z - playerZ, dy = 42.0f;
+        float inverseLength = 1.0f / (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return cloudOpacity(dy * inverseLength, dx * inverseLength, dz * inverseLength) > 0;
+    }
+
     private static float sampleCloudMap(float x, float y) {
         int x0 = (int) Math.floor(x), y0 = (int) Math.floor(y);
         float tx = x - x0, ty = y - y0;
-        x0 &= CLOUD_SIZE - 1;
-        y0 &= CLOUD_SIZE - 1;
-        int nearestX = (x0 + (tx >= 0.5f ? 1 : 0)) & (CLOUD_SIZE - 1);
-        int nearestY = (y0 + (ty >= 0.5f ? 1 : 0)) & (CLOUD_SIZE - 1);
-        return CLOUD_MAP[nearestY * CLOUD_SIZE + nearestX];
+        int wrappedX = x0 & (CLOUD_SIZE - 1), wrappedY = y0 & (CLOUD_SIZE - 1);
+        int nextX = (wrappedX + 1) & (CLOUD_SIZE - 1), nextY = (wrappedY + 1) & (CLOUD_SIZE - 1);
+        float top = lerp(CLOUD_MAP[wrappedY * CLOUD_SIZE + wrappedX],
+                CLOUD_MAP[wrappedY * CLOUD_SIZE + nextX], tx);
+        float bottom = lerp(CLOUD_MAP[nextY * CLOUD_SIZE + wrappedX],
+                CLOUD_MAP[nextY * CLOUD_SIZE + nextX], tx);
+        return lerp(top, bottom, ty);
     }
 
     private static float[] createCloudMap() {
@@ -450,6 +623,42 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
 
     private static float smoothStep(float value) { return value * value * (3 - 2 * value); }
     private static float clamp01(float value) { return Math.max(0, Math.min(1, value)); }
+    private static float lerp(float from, float to, float amount) { return from + (to - from) * amount; }
+
+    private static int lobbyCardY(int centerY) { return centerY - 218; }
+    private static int lobbyLeftCardX(int centerX) { return centerX - 309; }
+    private static int lobbyRightCardX(int centerX) { return centerX + 13; }
+    private static int lobbyStartButtonX(int centerX) { return centerX - 165; }
+    private static int lobbyStartButtonY(int centerY) { return centerY + 215; }
+
+    private static Font[][] createUiFonts() {
+        Font[][] fonts = new Font[2][40];
+        for (int size = 1; size < fonts[0].length; size++) {
+            fonts[0][size] = new Font("SansSerif", Font.PLAIN, size);
+            fonts[1][size] = new Font("SansSerif", Font.BOLD, size);
+        }
+        return fonts;
+    }
+
+    private static Font uiFont(int style, int size) { return UI_FONTS[style == Font.BOLD ? 1 : 0][size]; }
+
+    private static Color cachedColor(int red, int green, int blue) {
+        return cachedColor(red, green, blue, 255);
+    }
+
+    private static Color cachedColor(int red, int green, int blue, int alpha) {
+        int key = (alpha << 24) | (red << 16) | (green << 8) | blue;
+        int start = (key * 0x9e3779b9) >>> 23;
+        for (int probe = 0; probe < COLOR_CACHE.length; probe++) {
+            int index = (start + probe) & (COLOR_CACHE.length - 1);
+            if (COLOR_CACHE_KEYS[index] == key) return COLOR_CACHE[index];
+            if (COLOR_CACHE_KEYS[index] == 0) {
+                COLOR_CACHE_KEYS[index] = key;
+                return COLOR_CACHE[index] = new Color(red, green, blue, alpha);
+            }
+        }
+        return new Color(red, green, blue, alpha);
+    }
 
     private void updateCreative(float dt) {
         float forward = (pressed(KeyEvent.VK_W) ? 1 : 0) - (pressed(KeyEvent.VK_S) ? 1 : 0);
@@ -470,9 +679,12 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private void breedAnimals() {
+        int[] populations = animalPopulationScratch;
+        Arrays.fill(populations, 0);
+        for (Animal animal : animals) if (animal.alive) populations[animal.kind.ordinal()]++;
         for (int i = 0; i < animals.length; i++) {
             Animal first = animals[i];
-            if (!first.canBreed()) continue;
+            if (!first.canBreed() || populations[first.kind.ordinal()] >= MAX_ANIMALS_PER_KIND) continue;
             for (int j = i + 1; j < animals.length; j++) {
                 Animal second = animals[j];
                 if (!second.canBreed() || first.kind != second.kind) continue;
@@ -539,7 +751,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private void eatFood() {
-        if (creativeMode) return;
+        if (creativeMode || hunger >= 100) return;
         if (meatCount > 0 && hunger < 100) {
             meatCount--;
             restoreHunger(35);
@@ -584,6 +796,20 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 (int) Math.floor(playerZ)) == World.WATER;
     }
 
+    private boolean isOnLadder() {
+        int minX = (int) Math.floor(playerX - 0.34f), maxX = (int) Math.floor(playerX + 0.34f);
+        int minY = (int) Math.floor(playerY + 0.1f), maxY = (int) Math.floor(playerY + 1.7f);
+        int minZ = (int) Math.floor(playerZ - 0.34f), maxZ = (int) Math.floor(playerZ + 0.34f);
+        for (int y = minY; y <= maxY; y++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int x = minX; x <= maxX; x++) {
+                    if (World.isLadderBlock(world.get(x, y, z))) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private void respawnPlayer() {
         playerX = spawnX + 0.5f;
         playerZ = spawnZ + 0.5f;
@@ -616,13 +842,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private boolean canOccupy(float x, float feetY, float z) {
-        for (int sampleX = -1; sampleX <= 1; sampleX++) {
-            for (int sampleZ = -1; sampleZ <= 1; sampleZ++) {
-                float blockX = x + sampleX * 0.23f, blockZ = z + sampleZ * 0.23f;
-                if (solidAt(blockX, feetY + 0.15f, blockZ)
-                        || solidAt(blockX, feetY + 0.90f, blockZ)
-                        || solidAt(blockX, feetY + 1.65f, blockZ)
-                        || solidAt(blockX, feetY + 1.78f, blockZ)) return false;
+        int minX = (int) Math.floor(x - 0.23f), maxX = (int) Math.floor(x + 0.23f - 0.001f);
+        int minY = (int) Math.floor(feetY + 0.15f), maxY = (int) Math.floor(feetY + 1.78f);
+        int minZ = (int) Math.floor(z - 0.23f), maxZ = (int) Math.floor(z + 0.23f - 0.001f);
+        for (int blockY = minY; blockY <= maxY; blockY++) {
+            for (int blockZ = minZ; blockZ <= maxZ; blockZ++) {
+                for (int blockX = minX; blockX <= maxX; blockX++) {
+                    if (solidAt(blockX + 0.5f, blockY + 0.5f, blockZ + 0.5f)) return false;
+                }
             }
         }
         if (!creativeMode) {
@@ -672,7 +899,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         int blockX = (int) Math.floor(x), blockZ = (int) Math.floor(z);
         if (blockX < 1 || blockZ < 1 || blockX >= World.WIDTH - 1 || blockZ >= World.DEPTH - 1) return true;
         byte type = world.get(blockX, (int) Math.floor(y), blockZ);
-        return type != World.AIR && type != World.WATER && !World.isFlower(type) && !World.isMushroom(type);
+        return World.isSolid(type);
     }
 
     private void render() {
@@ -692,8 +919,12 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         waterHitDistance = Float.POSITIVE_INFINITY;
         int centerIndex = (VIEW_HEIGHT / 2) * VIEW_WIDTH + VIEW_WIDTH / 2;
 
-        for (int py = 0, index = 0; py < VIEW_HEIGHT; py++) {
+        IntStream.range(0, VIEW_HEIGHT).parallel().forEach(py -> {
             float sy = columnY[py];
+            int index = py * VIEW_WIDTH;
+            Hit rowTraceScratch = traceScratch[py];
+            Hit rowUnderwaterScratch = underwaterTraceScratch[py];
+            AnimalHit rowAnimalScratch = animalHitScratch[py];
             for (int px = 0; px < VIEW_WIDTH; px++, index++) {
                 float sx = columnX[px];
                 float dx = fx + rx * sx + ux * sy;
@@ -701,8 +932,9 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 float dz = fz + rz * sx + uz * sy;
                 float inverseLength = 1.0f / (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
                 dx *= inverseLength; dy *= inverseLength; dz *= inverseLength;
-                Hit hit = trace(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance, false, traceScratch);
-                AnimalHit animalHit = traceAnimals(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance, visibleAnimalCount);
+                Hit hit = trace(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance, false, rowTraceScratch);
+                AnimalHit animalHit = traceAnimals(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance,
+                        visibleAnimalCount, rowAnimalScratch);
                 if (hit.type == World.WATER) {
                     if (index == centerIndex) {
                         hasWaterHit = true;
@@ -718,7 +950,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                         }
                         continue;
                     }
-                    Hit underwaterHit = trace(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance, true, underwaterTraceScratch);
+                    Hit underwaterHit = trace(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance, true, rowUnderwaterScratch);
                     float backgroundDistance = underwaterHit.type == World.AIR ? 25.0f : underwaterHit.distance;
                     float waterDepth = Math.max(0.0f, backgroundDistance - hit.distance);
                     int background;
@@ -765,7 +997,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 }
                 pixels[index] = shadeBlock(hit, eyeX, eyeY, eyeZ);
             }
-        }
+        });
     }
 
     private Hit trace(float ox, float oy, float oz, float dx, float dy, float dz,
@@ -787,12 +1019,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             byte type = world.get(x, y, z);
             if (type != World.AIR && !(ignoreWater && type == World.WATER)) {
                 if (World.isFlower(type)) {
-                    Hit plant = tracePlant(ox, oy, oz, dx, dy, dz, maxDistance, distance, x, y, z, type, FLOWER_PARTS);
-                    if (plant != null) return result.set(plant);
+                    if (tracePlant(ox, oy, oz, dx, dy, dz, maxDistance, distance,
+                            x, y, z, type, FLOWER_PARTS, result)) return result;
                 } else if (World.isMushroom(type)) {
-                    Hit mushroom = tracePlant(ox, oy, oz, dx, dy, dz, maxDistance, distance,
-                            x, y, z, type, mushroomParts(type));
-                    if (mushroom != null) return result.set(mushroom);
+                    if (tracePlant(ox, oy, oz, dx, dy, dz, maxDistance, distance,
+                            x, y, z, type, mushroomParts(type), result)) return result;
+                } else if (World.isLadderBlock(type)) {
+                    if (tracePlant(ox, oy, oz, dx, dy, dz, maxDistance, distance,
+                            x, y, z, type, ladderParts(type), result)) return result;
                 } else {
                     return result.set(x, y, z, type, type, nx, ny, nz, distance,
                             ox + dx * distance, oy + dy * distance, oz + dz * distance);
@@ -810,9 +1044,9 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         return Hit.MISS;
     }
 
-    private Hit tracePlant(float ox, float oy, float oz, float dx, float dy, float dz,
-                           float maxDistance, float cellEntry, int cellX, int cellY, int cellZ,
-                           byte plantType, float[][] plantParts) {
+    private boolean tracePlant(float ox, float oy, float oz, float dx, float dy, float dz,
+                               float maxDistance, float cellEntry, int cellX, int cellY, int cellZ,
+                               byte plantType, float[][] plantParts, Hit result) {
         float localOx = ox - cellX, localOy = oy - cellY, localOz = oz - cellZ;
         float nearest = maxDistance;
         int normalX = 0, normalY = 0, normalZ = 0;
@@ -839,16 +1073,46 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             if (candidate < face) { nx = 0; ny = 0; nz = 1; }
             normalX = nx; normalY = ny; normalZ = nz;
         }
-        if (nearest >= maxDistance) return null;
-        return new Hit(cellX, cellY, cellZ, plantType, visibleType,
-                normalX, normalY, normalZ, nearest,
+        if (nearest >= maxDistance) return false;
+        result.set(cellX, cellY, cellZ, plantType, visibleType, normalX, normalY, normalZ, nearest,
                 ox + dx * nearest, oy + dy * nearest, oz + dz * nearest);
+        return true;
     }
 
     private static float[][] mushroomParts(byte type) {
         if (type == World.RED_MUSHROOM_SMALL || type == World.BROWN_MUSHROOM_SMALL) return SMALL_MUSHROOM_PARTS;
         if (type == World.RED_MUSHROOM_MEDIUM || type == World.BROWN_MUSHROOM_MEDIUM) return MEDIUM_MUSHROOM_PARTS;
         return LARGE_MUSHROOM_PARTS;
+    }
+
+    private static float[][] ladderParts(byte type) {
+        return switch (type) {
+            case World.LADDER_Z_NEG -> LADDER_Z_NEG_PARTS;
+            case World.LADDER_X_POS -> LADDER_X_POS_PARTS;
+            case World.LADDER_X_NEG -> LADDER_X_NEG_PARTS;
+            default -> LADDER_Z_POS_PARTS;
+        };
+    }
+
+    private static float[][] createLadderParts(boolean alongX, boolean highSide) {
+        float wallMin = highSide ? 0.88f : 0.04f, wallMax = highSide ? 0.96f : 0.12f;
+        float[][] parts = new float[7][7];
+        if (alongX) {
+            parts[0] = new float[]{wallMin, 0.0f, 0.12f, wallMax, 1.0f, 0.22f, 0};
+            parts[1] = new float[]{wallMin, 0.0f, 0.78f, wallMax, 1.0f, 0.88f, 0};
+            for (int rung = 0; rung < 5; rung++) {
+                float bottom = 0.07f + rung * 0.21f;
+                parts[rung + 2] = new float[]{wallMin, bottom, 0.18f, wallMax, bottom + 0.075f, 0.82f, 0};
+            }
+        } else {
+            parts[0] = new float[]{0.12f, 0.0f, wallMin, 0.22f, 1.0f, wallMax, 0};
+            parts[1] = new float[]{0.78f, 0.0f, wallMin, 0.88f, 1.0f, wallMax, 0};
+            for (int rung = 0; rung < 5; rung++) {
+                float bottom = 0.07f + rung * 0.21f;
+                parts[rung + 2] = new float[]{0.18f, bottom, wallMin, 0.82f, bottom + 0.075f, wallMax, 0};
+            }
+        }
+        return parts;
     }
 
     private int findVisibleAnimals(float ox, float oy, float oz, float fx, float fy, float fz) {
@@ -862,14 +1126,19 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             float forwardDistance = toX * fx + toY * fy + toZ * fz;
             if (forwardDistance + 2.1f < 0
                     || (forwardDistance > 0 && forwardDistance * forwardDistance < distanceSquared * 0.04f)) continue;
-            if (count < visibleAnimals.length) visibleAnimals[count++] = animal;
+            if (count < visibleAnimals.length) {
+                visibleAnimals[count] = animal;
+                visibleAnimalCos[count] = (float) Math.cos(animal.yaw);
+                visibleAnimalSin[count] = (float) Math.sin(animal.yaw);
+                count++;
+            }
         }
         return count;
     }
 
     private AnimalHit traceAnimals(float ox, float oy, float oz, float dx, float dy, float dz,
-                                   float maxDistance, int visibleAnimalCount) {
-        AnimalHit closest = null;
+                                   float maxDistance, int visibleAnimalCount, AnimalHit result) {
+        boolean found = false;
         float closestDistance = maxDistance;
         for (int animalIndex = 0; animalIndex < visibleAnimalCount; animalIndex++) {
             Animal animal = visibleAnimals[animalIndex];
@@ -878,7 +1147,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             float perpendicularSquared = toX * toX + toY * toY + toZ * toZ - along * along;
             if (perpendicularSquared > 4.41f || along + 2.1f < 0 || along - 2.1f > closestDistance) continue;
 
-            float cos = (float) Math.cos(animal.yaw), sin = (float) Math.sin(animal.yaw);
+            float cos = visibleAnimalCos[animalIndex], sin = visibleAnimalSin[animalIndex];
             float localOx = -cos * toX + sin * toZ;
             float localOz = -sin * toX - cos * toZ;
             float localDx = cos * dx - sin * dz;
@@ -886,7 +1155,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             float localOy = oy - animal.y, localDy = dy;
             float modelScale = (animal.kind.isFish() ? 1.35f : 1.0f) * animal.growth;
             for (Animal.Part part : animal.parts) {
-                float legSwing = part.gaitOffset == 0 ? 0 : (float) Math.sin(animal.gait + part.gaitOffset) * 0.10f * modelScale;
+                float legSwing = part.gaitSwing * modelScale;
                 float jawDrop = part.animatedJaw ? animal.mouthOpening() * modelScale : 0;
                 float minX = part.minX * modelScale, maxX = part.maxX * modelScale;
                 float minY = part.minY * modelScale - jawDrop, maxY = part.maxY * modelScale - jawDrop;
@@ -915,11 +1184,12 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 float worldNx = cos * nx + sin * nz;
                 float worldNz = -sin * nx + cos * nz;
                 closestDistance = distance;
-                closest = new AnimalHit(animal, part.color, distance,
+                result.set(animal, part.color, distance,
                         worldNx, ny, worldNz, ox + dx * distance, oy + dy * distance, oz + dz * distance);
+                found = true;
             }
         }
-        return closest;
+        return found ? result : null;
     }
 
     private static float intersectBox(float ox, float oy, float oz, float dx, float dy, float dz,
@@ -1097,54 +1367,19 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private int shadeBlock(Hit hit, float eyeX, float eyeY, float eyeZ) {
         byte type = hit.visualType;
         float texture = textureNoise(hit);
-        float baseR, baseG, baseB;
+        int baseColor = BlockRegistry.info(type).shadedColor();
         if (type == World.GRASS) {
-            if (hit.ny == 0 && hit.py - hit.y > 0.84f) { baseR = 85; baseG = 133; baseB = 63; }
-            else if (hit.ny == 1) { baseR = 87; baseG = 157; baseB = 69; }
-            else { baseR = 107; baseG = 91; baseB = 61; }
-        } else if (type == World.DIRT) { baseR = 125; baseG = 91; baseB = 61; }
-        else if (type == World.STONE) { baseR = 120; baseG = 126; baseB = 126; }
-        else if (type == World.SAND) { baseR = 205; baseG = 190; baseB = 139; }
-        else if (type == World.WOOD) { baseR = 126; baseG = 85; baseB = 48; }
-        else if (type == World.LEAVES) { baseR = 55; baseG = 120; baseB = 65; }
-        else if (type == World.COAL_ORE) { baseR = 62; baseG = 67; baseB = 73; }
-        else if (type == World.COPPER_ORE) { baseR = 190; baseG = 112; baseB = 70; }
-        else if (type == World.IRON_ORE) { baseR = 175; baseG = 132; baseB = 108; }
-        else if (type == World.GOLD_ORE) { baseR = 226; baseG = 186; baseB = 65; }
-        else if (type == World.DIAMOND_ORE) { baseR = 81; baseG = 211; baseB = 225; }
-        else if (type == World.EMERALD_ORE) { baseR = 47; baseG = 192; baseB = 111; }
-        else if (type == World.RUBY_ORE) { baseR = 208; baseG = 57; baseB = 79; }
-        else if (type == World.SAPPHIRE_ORE) { baseR = 71; baseG = 116; baseB = 229; }
-        else if (type == World.SNOW) { baseR = 223; baseG = 236; baseB = 241; }
-        else if (type == World.RED_FLOWER) { baseR = 215; baseG = 65; baseB = 83; }
-        else if (type == World.YELLOW_FLOWER) { baseR = 244; baseG = 205; baseB = 68; }
-        else if (type == World.BLUE_FLOWER) { baseR = 87; baseG = 120; baseB = 226; }
-        else if (World.isMushroom(type)) {
-            boolean redCap = type <= World.RED_MUSHROOM_LARGE;
-            if (hit.visualType == World.SNOW) { baseR = 231; baseG = 224; baseB = 207; }
-            else if (redCap) {
-                baseR = texture > 0.82f ? 243 : 190;
-                baseG = texture > 0.82f ? 227 : 56;
-                baseB = texture > 0.82f ? 198 : 54;
-            } else {
-                baseR = texture > 0.86f ? 224 : 151;
-                baseG = texture > 0.86f ? 195 : 103;
-                baseB = texture > 0.86f ? 151 : 62;
-            }
+            if (hit.ny == 0 && hit.py - hit.y > 0.84f) baseColor = 0x55853f;
+            else if (hit.ny == 1) baseColor = 0x579d45;
+            else baseColor = 0x6b5b3d;
+        } else if (World.isMushroom(hit.type) && type != World.SNOW) {
+            boolean redCap = hit.type <= World.RED_MUSHROOM_LARGE;
+            if (redCap) baseColor = texture > 0.82f ? 0xf3e3c6 : 0xbe3836;
+            else baseColor = texture > 0.86f ? 0xe0c397 : 0x97673e;
         }
-        else if (type == World.BIRCH_WOOD) { baseR = 224; baseG = 215; baseB = 179; }
-        else if (type == World.BIRCH_LEAVES) { baseR = 116; baseG = 168; baseB = 80; }
-        else if (type == World.PINE_WOOD) { baseR = 96; baseG = 69; baseB = 44; }
-        else if (type == World.PINE_LEAVES) { baseR = 37; baseG = 89; baseB = 56; }
-        else if (type == World.ACACIA_WOOD) { baseR = 166; baseG = 105; baseB = 57; }
-        else if (type == World.ACACIA_LEAVES) { baseR = 126; baseG = 142; baseB = 62; }
-        else if (type == World.CHERRY_WOOD) { baseR = 129; baseG = 77; baseB = 73; }
-        else if (type == World.CHERRY_LEAVES) { baseR = 224; baseG = 135; baseB = 173; }
-        else if (type == World.PLANKS) { baseR = 175; baseG = 125; baseB = 75; }
-        else if (type == World.TORCH) { baseR = 245; baseG = 166; baseB = 57; }
-        else if (type == World.EMERALD_BLOCK) { baseR = 32; baseG = 154; baseB = 93; }
-        else if (type == World.WOOL) { baseR = 220; baseG = 214; baseB = 198; }
-        else { baseR = 48; baseG = 122; baseB = 143; }
+        float baseR = (baseColor >>> 16) & 0xff;
+        float baseG = (baseColor >>> 8) & 0xff;
+        float baseB = baseColor & 0xff;
 
         float diffuse = Math.max(0, hit.nx * sunX + hit.ny * sunY + hit.nz * sunZ);
         float normalLight = 0.16f + sunlight * 0.35f + diffuse * (0.43f * sunlight);
@@ -1154,6 +1389,8 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         lighting *= 1.0f - rainIntensity * 0.16f;
         if (hit.y < world.heightAt(hit.x, hit.z) - 3) lighting *= 0.34f;
         if (type != World.WATER && inSunShadow(hit)) lighting *= 0.68f;
+        int torchLight = world.torchLightAt(hit.x, hit.y, hit.z);
+        if (torchLight > 0) lighting = Math.max(lighting, 0.12f + torchLight / 15.0f * 0.88f);
         if (type == World.WATER) lighting *= 1.16f;
         float distance = hit.distance;
         float fog = Math.max(0, Math.min(0.89f, (distance - renderDistance * 4.0f) / (renderDistance * 16.0f)));
@@ -1192,15 +1429,29 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         return ((value >>> 40) & 0xffff) / 65535.0f;
     }
 
-    private void drawFrame() {
+    private synchronized void drawFrame() {
+        if (!isDisplayable() || getWidth() <= 0 || getHeight() <= 0) return;
         BufferStrategy strategy = getBufferStrategy();
-        if (strategy == null) return;
+        if (strategy == null) {
+            try {
+                recreateBufferStrategy();
+                strategy = getBufferStrategy();
+            } catch (IllegalStateException unavailable) {
+                return;
+            }
+            if (strategy == null) return;
+        }
+        int canvasWidth = getWidth(), canvasHeight = getHeight();
         do {
             do {
                 Graphics2D g = (Graphics2D) strategy.getDrawGraphics();
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-                g.drawImage(scene, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, null);
-                if (!inLobby && !paused) drawRain(g);
+                g.drawImage(scene, 0, 0, canvasWidth, canvasHeight, null);
+                g.scale(canvasWidth / (double) WINDOW_WIDTH, canvasHeight / (double) WINDOW_HEIGHT);
+                if (!inLobby && !paused) {
+                    drawRain(g);
+                    drawRainSplashes(g);
+                }
                 drawHud(g);
                 g.dispose();
             } while (strategy.contentsRestored());
@@ -1209,39 +1460,47 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         } while (strategy.contentsLost());
     }
 
+    private void recreateBufferStrategy() {
+        BufferStrategy previous = getBufferStrategy();
+        if (previous != null) previous.dispose();
+        if (isDisplayable()) createBufferStrategy(2);
+    }
+
     private void drawHud(Graphics2D g) {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         int cx = WINDOW_WIDTH / 2, cy = WINDOW_HEIGHT / 2;
         if (inLobby) {
             drawLobby(g, cx, cy);
+            drawSaveMessage(g);
             return;
         }
         if (inventoryOpen) {
             drawInventoryDialog(g, cx, cy);
+            drawSaveMessage(g);
             return;
         }
         drawEnvironmentBadge(g, cx);
-        g.setColor(new Color(255, 255, 255, 210));
+        g.setColor(cachedColor(255, 255, 255, 210));
         g.setStroke(new BasicStroke(2.2f));
         g.drawLine(cx - 10, cy, cx - 3, cy); g.drawLine(cx + 3, cy, cx + 10, cy);
         g.drawLine(cx, cy - 10, cx, cy - 3); g.drawLine(cx, cy + 3, cx, cy + 10);
         if (!creativeMode) drawSurvivalIndicators(g);
         if (aimedAnimal != null) {
-            g.setFont(new Font("SansSerif", Font.BOLD, 14));
-            g.setColor(new Color(7, 17, 20, 170));
+            g.setFont(uiFont(Font.BOLD, 14));
+            g.setColor(cachedColor(7, 17, 20, 170));
             int labelWidth = g.getFontMetrics().stringWidth(aimedAnimal) + 20;
             g.fillRoundRect(cx - labelWidth / 2, cy + 18, labelWidth, 23, 10, 10);
-            g.setColor(new Color(245, 244, 221));
+            g.setColor(cachedColor(245, 244, 221));
             g.drawString(aimedAnimal, cx - g.getFontMetrics().stringWidth(aimedAnimal) / 2, cy + 34);
         }
 
-        g.setFont(new Font("SansSerif", Font.BOLD, 17));
-        g.setColor(new Color(8, 19, 27, 145));
+        g.setFont(uiFont(Font.BOLD, 17));
+        g.setColor(cachedColor(8, 19, 27, 145));
         g.fillRoundRect(23, 23, 340, 73, 18, 18);
         g.setColor(Color.WHITE);
         g.drawString("TYTANCRAFT", 40, 51);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        g.setColor(new Color(224, 238, 235));
+        g.setFont(uiFont(Font.PLAIN, 14));
+        g.setColor(cachedColor(224, 238, 235));
         g.drawString(creativeMode ? "Kreatywny  •  " + fps + " FPS"
                 : "Przetrwanie  •  HP " + playerHealth + "  •  " + fps + " FPS", 40, 77);
 
@@ -1249,66 +1508,103 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         int startX = (WINDOW_WIDTH - total) / 2, y = WINDOW_HEIGHT - 95;
         for (int i = 0; i < hotbar.length; i++) {
             int x = startX + i * (slotSize + gap);
-            g.setColor(new Color(7, 16, 22, 168));
+            g.setColor(cachedColor(7, 16, 22, 168));
             g.fillRoundRect(x, y, slotSize, slotSize, 12, 12);
-            g.setColor(i == selectedBlock ? new Color(247, 226, 156) : new Color(255, 255, 255, 120));
+            g.setColor(i == selectedBlock ? cachedColor(247, 226, 156) : cachedColor(255, 255, 255, 120));
             g.setStroke(new BasicStroke(i == selectedBlock ? 3 : 1));
             g.drawRoundRect(x, y, slotSize, slotSize, 12, 12);
             drawBlockIcon(g, x + 11, y + 15, hotbar[i]);
-            g.setColor(new Color(245, 247, 242));
-            g.setFont(new Font("SansSerif", Font.BOLD, 12));
+            g.setColor(cachedColor(245, 247, 242));
+            g.setFont(uiFont(Font.BOLD, 12));
             if (i < 9) g.drawString(Integer.toString(i + 1), x + 3, y + 14);
             else g.drawString("0", x + 3, y + 14);
         }
-        g.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        g.setFont(uiFont(Font.PLAIN, 14));
         byte selectedType = hotbar[selectedBlock];
         String selectedName = blockName(selectedType)
                 + (creativeMode ? "" : " ×" + inventory[selectedType & 0xff]);
-        g.setColor(new Color(10, 20, 24, 165));
+        g.setColor(cachedColor(10, 20, 24, 165));
         int labelWidth = g.getFontMetrics().stringWidth(selectedName) + 26;
         g.fillRoundRect(cx - labelWidth / 2, y - 31, labelWidth, 23, 10, 10);
         g.setColor(Color.WHITE);
         g.drawString(selectedName, cx - g.getFontMetrics().stringWidth(selectedName) / 2, y - 14);
 
-        g.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        g.setColor(new Color(255, 255, 255, 224));
+        g.setFont(uiFont(Font.PLAIN, 14));
+        g.setColor(cachedColor(255, 255, 255, 224));
         if (isInWater()) {
             g.drawString("PŁYWANIE   SPACJA — góra   CTRL — dół   W+SPACJA — wyjdź", 26, WINDOW_HEIGHT - 57);
         }
         g.drawString(String.format("X %d   Y %d   Z %d", (int) playerX, (int) playerY, (int) playerZ), 26, WINDOW_HEIGHT - 32);
         if (!captured || paused) drawStartOverlay(g, cx, cy);
+        drawSaveMessage(g);
+    }
+
+    private void drawSaveMessage(Graphics2D g) {
+        if (saveMessageTimer <= 0 || saveMessage.isEmpty()) return;
+        g.setFont(uiFont(Font.BOLD, 14));
+        int width = g.getFontMetrics().stringWidth(saveMessage) + 28;
+        int x = (WINDOW_WIDTH - width) / 2;
+        int top = inLobby ? 539 : 24;
+        g.setColor(cachedColor(8, 20, 20, 220));
+        g.fillRoundRect(x, top, width, 34, 10, 10);
+        g.setColor(saveMessage.startsWith("Nie") ? cachedColor(255, 176, 153) : cachedColor(218, 241, 201));
+        g.drawString(saveMessage, x + 14, top + 22);
     }
 
     private void drawInventoryDialog(Graphics2D g, int cx, int cy) {
-        g.setColor(new Color(4, 10, 15, 175));
+        g.setColor(cachedColor(4, 10, 15, 175));
         g.fillRect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
         int x = WINDOW_WIDTH / 2 - 485, y = WINDOW_HEIGHT / 2 - 315;
-        g.setColor(new Color(13, 25, 31, 246));
-        g.fillRoundRect(x, y, INVENTORY_WIDTH, INVENTORY_HEIGHT, 24, 24);
-        g.setColor(new Color(204, 225, 208, 190));
-        g.setStroke(new BasicStroke(1.4f));
-        g.drawRoundRect(x, y, INVENTORY_WIDTH, INVENTORY_HEIGHT, 24, 24);
-        g.setFont(new Font("SansSerif", Font.BOLD, 25));
-        g.setColor(new Color(190, 226, 172));
-        String title = "PLECAK I RZEMIOSŁO";
+        g.setColor(cachedColor(198, 198, 198));
+        g.fillRect(x, y, INVENTORY_WIDTH, INVENTORY_HEIGHT);
+        g.setColor(cachedColor(58, 58, 58));
+        g.drawRect(x, y, INVENTORY_WIDTH - 1, INVENTORY_HEIGHT - 1);
+        g.setColor(Color.WHITE);
+        g.drawLine(x + 1, y + 1, x + INVENTORY_WIDTH - 2, y + 1);
+        g.drawLine(x + 1, y + 1, x + 1, y + INVENTORY_HEIGHT - 2);
+        g.setColor(cachedColor(105, 105, 105));
+        g.drawLine(x + 2, y + INVENTORY_HEIGHT - 2, x + INVENTORY_WIDTH - 2, y + INVENTORY_HEIGHT - 2);
+        g.drawLine(x + INVENTORY_WIDTH - 2, y + 2, x + INVENTORY_WIDTH - 2, y + INVENTORY_HEIGHT - 2);
+        g.setFont(MONOSPACED_BOLD_14);
+        g.setColor(cachedColor(46, 46, 46));
+        String title = inventoryTab == 3 ? "Crafting" : "Inventory";
         g.drawString(title, cx - g.getFontMetrics().stringWidth(title) / 2, y + 39);
 
         int tabY = y + 55;
         String[] tabs = {"BLOKI", "NATURA", "SPAWN", "CRAFTING"};
         for (int i = 0; i < tabs.length; i++) {
-            drawLobbyModeButton(g, x + 24 + i * 208, tabY, 200, 36, tabs[i], inventoryTab == i);
+            drawClassicTabButton(g, x + 24 + i * 208, tabY, 200, 36,
+                    tabs[i], inventoryTab == i);
         }
-        g.setColor(new Color(163, 186, 169));
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        g.setColor(cachedColor(60, 60, 60));
+        g.setFont(uiFont(Font.PLAIN, 12));
         g.drawString("ESC / E — zamknij", x + 850, tabY + 23);
-        g.setColor(new Color(131, 59, 63));
-        g.fillRoundRect(x + INVENTORY_WIDTH - 51, y + 15, 34, 32, 9, 9);
+        g.setColor(cachedColor(142, 142, 142));
+        g.fillRect(x + INVENTORY_WIDTH - 51, y + 15, 34, 32);
         g.setColor(Color.WHITE);
-        g.setFont(new Font("SansSerif", Font.BOLD, 20));
+        g.drawRect(x + INVENTORY_WIDTH - 51, y + 15, 33, 31);
+        g.setColor(cachedColor(46, 46, 46));
+        g.setFont(uiFont(Font.BOLD, 20));
         g.drawString("×", x + INVENTORY_WIDTH - 41, y + 38);
 
         if (inventoryTab == 3) drawCraftingDialog(g, x, y);
         else drawHotbarDialog(g, x, y, inventoryItems(inventoryTab), tabs[inventoryTab]);
+    }
+
+    private void drawClassicTabButton(Graphics2D g, int x, int y, int width, int height,
+                                      String label, boolean selected) {
+        g.setColor(selected ? cachedColor(188, 188, 188) : cachedColor(158, 158, 158));
+        g.fillRect(x, y, width, height);
+        g.setColor(Color.WHITE);
+        g.drawLine(x, y, x + width - 1, y);
+        g.drawLine(x, y, x, y + height - 1);
+        g.setColor(cachedColor(65, 65, 65));
+        g.drawLine(x, y + height - 1, x + width - 1, y + height - 1);
+        g.drawLine(x + width - 1, y, x + width - 1, y + height - 1);
+        g.setColor(cachedColor(45, 45, 45));
+        g.setFont(uiFont(Font.BOLD, 10));
+        g.drawString(label, x + (width - g.getFontMetrics().stringWidth(label)) / 2,
+                y + (height + g.getFontMetrics().getAscent()) / 2 - 2);
     }
 
     private byte[] inventoryItems(int tab) {
@@ -1320,103 +1616,157 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private void drawHotbarDialog(Graphics2D g, int panelX, int panelY, byte[] items, String category) {
-        int cardY = panelY + 112, cardHeight = 455;
-        int leftX = panelX + 22, leftWidth = 300;
-        int rightX = panelX + 337, rightWidth = 612;
-        drawLobbyCard(g, leftX, cardY, leftWidth, cardHeight, "10 MIEJSC HOTBARA");
-        drawLobbyCard(g, rightX, cardY, rightWidth, cardHeight, "DOSTĘPNE: " + category);
-
-        for (int slot = 0; slot < hotbar.length; slot++) {
-            int col = slot % 2, row = slot / 2;
-            int x = leftX + 12 + col * 137, y = cardY + 46 + row * 73;
-            g.setColor(new Color(8, 19, 22, 215));
-            g.fillRoundRect(x, y, 130, 64, 10, 10);
-            g.setColor(slot == customizeSlot ? new Color(238, 215, 143) : new Color(255, 255, 255, 65));
-            g.setStroke(new BasicStroke(slot == customizeSlot ? 2 : 1));
-            g.drawRoundRect(x, y, 130, 64, 10, 10);
-            drawBlockIcon(g, x + 3, y + 18, hotbar[slot]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.setColor(new Color(231, 237, 225));
-            g.drawString(slot == 9 ? "0" : Integer.toString(slot + 1), x + 5, y + 13);
-            String label = shorten(blockName(hotbar[slot]), 12);
-            g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.drawString(label, x + 39, y + 29);
-            if (!creativeMode) {
-                g.setFont(new Font("SansSerif", Font.PLAIN, 10));
-                g.setColor(new Color(176, 199, 182));
-                g.drawString("×" + inventory[hotbar[slot] & 0xff], x + 39, y + 46);
-            }
-        }
-
-        int gridX = rightX + 8, gridY = cardY + 43, tileWidth = 112, tileHeight = 64, xStep = 116, yStep = 70;
+        g.setColor(cachedColor(52, 52, 52));
+        g.setFont(MONOSPACED_BOLD_14);
+        g.setFont(MONOSPACED_BOLD_14);
+        g.setColor(cachedColor(52, 52, 52));
+        g.drawString("Available: " + category, panelX + 30, panelY + 124);
+        int slotSize = CRAFT_INVENTORY_SLOT_SIZE, gap = CRAFT_INVENTORY_GAP;
+        int gridWidth = 9 * slotSize + 8 * gap;
+        int gridX = panelX + (INVENTORY_WIDTH - gridWidth) / 2, gridY = panelY + 140;
         for (int i = 0; i < items.length; i++) {
-            int col = i % 5, row = i / 5;
-            int x = gridX + col * xStep, y = gridY + row * yStep;
+            int col = i % 9, row = i / 9;
+            int x = gridX + col * (slotSize + gap), y = gridY + row * (slotSize + gap);
             boolean selected = items[i] == hotbar[customizeSlot];
-            g.setColor(new Color(8, 19, 22, 215));
-            g.fillRoundRect(x, y, tileWidth, tileHeight, 9, 9);
-            g.setColor(selected ? new Color(183, 214, 153) : new Color(255, 255, 255, 55));
-            g.setStroke(new BasicStroke(selected ? 1.7f : 1));
-            g.drawRoundRect(x, y, tileWidth, tileHeight, 9, 9);
-            drawBlockIcon(g, x + 7, y + 18, items[i]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 9));
-            g.setColor(new Color(235, 239, 228));
-            g.drawString(shorten(blockName(items[i]), 13), x + 43, y + 27);
-            if (!creativeMode) {
-                g.setFont(new Font("SansSerif", Font.PLAIN, 9));
-                g.setColor(new Color(176, 199, 182));
-                g.drawString("×" + inventory[items[i] & 0xff], x + 43, y + 45);
-            }
+            drawClassicSlot(g, x, y, slotSize, items[i], creativeMode ? 0 : inventory[items[i] & 0xff], selected);
         }
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        g.setColor(new Color(204, 222, 208));
-        g.drawString("Najpierw wybierz miejsce hotbara, potem kliknij blok, który chcesz tam przypisać.",
-                panelX + 205, panelY + 602);
+        g.setFont(MONOSPACED_BOLD_14);
+        g.setColor(cachedColor(52, 52, 52));
+        g.drawString("Hotbar", panelX + 30, panelY + 530);
+        int hotbarWidth = hotbar.length * CRAFT_INVENTORY_SLOT_SIZE + (hotbar.length - 1) * CRAFT_INVENTORY_GAP;
+        int hotbarX = panelX + (INVENTORY_WIDTH - hotbarWidth) / 2;
+        int hotbarY = panelY + 542;
+        for (int slot = 0; slot < hotbar.length; slot++) {
+            int x = hotbarX + slot * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            drawClassicSlot(g, x, hotbarY, CRAFT_INVENTORY_SLOT_SIZE, hotbar[slot],
+                    creativeMode ? 0 : inventory[hotbar[slot] & 0xff], slot == customizeSlot);
+            g.setFont(uiFont(Font.BOLD, 10));
+            g.setColor(cachedColor(45, 45, 45));
+            g.drawString(slot == 9 ? "0" : Integer.toString(slot + 1), x + 3, hotbarY + 11);
+        }
+        g.setFont(uiFont(Font.PLAIN, 12));
+        g.setColor(cachedColor(52, 52, 52));
+        String selectedItem = blockName(hotbar[customizeSlot]);
+        g.drawString("Wybierz slot hotbara, potem przedmiot. Wybrano: " + selectedItem,
+                panelX + 30, panelY + 625);
     }
 
     private void drawCraftingDialog(Graphics2D g, int panelX, int panelY) {
-        String[] names = {"Deski", "Pochodnie", "Blok szmaragdu"};
-        String[] ingredients = {"1× dowolne drewno", "2× deski + 1× węgiel", "9× szmaragd"};
-        byte[] outputs = {World.PLANKS, World.TORCH, World.EMERALD_BLOCK};
-        int[] outputCounts = {4, 4, 1};
-        int startX = panelX + 24, cardY = panelY + 123, cardWidth = 296, cardHeight = 430;
-        for (int recipe = 0; recipe < names.length; recipe++) {
-            int x = startX + recipe * 310;
-            drawLobbyCard(g, x, cardY, cardWidth, cardHeight, "RECEPTURA " + (recipe + 1));
-            g.setFont(new Font("SansSerif", Font.BOLD, 18));
-            g.setColor(new Color(238, 243, 231));
-            g.drawString(names[recipe], x + 20, cardY + 69);
-            g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-            g.setColor(new Color(185, 205, 190));
-            g.drawString("Składniki:", x + 20, cardY + 108);
-            g.setFont(new Font("SansSerif", Font.BOLD, 14));
-            g.setColor(new Color(228, 232, 213));
-            g.drawString(ingredients[recipe], x + 20, cardY + 133);
-            g.setColor(new Color(255, 255, 255, 36));
-            g.drawLine(x + 20, cardY + 157, x + cardWidth - 20, cardY + 157);
-            g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-            g.setColor(new Color(185, 205, 190));
-            g.drawString("Wynik:", x + 20, cardY + 188);
-            drawBlockIcon(g, x + 30, cardY + 215, outputs[recipe]);
-            g.setFont(new Font("SansSerif", Font.BOLD, 16));
-            g.setColor(new Color(236, 241, 226));
-            g.drawString(blockName(outputs[recipe]) + " ×" + outputCounts[recipe], x + 75, cardY + 249);
+        g.setColor(cachedColor(48, 48, 48));
+        g.setFont(MONOSPACED_BOLD_14);
+        g.drawString("Crafting", panelX + 32, panelY + 130);
+        g.drawString("Recipes", panelX + CRAFT_RECIPE_X, panelY + 130);
 
-            boolean canCraft = creativeMode || canCraftRecipe(recipe);
-            int buttonY = cardY + 340;
-            g.setColor(canCraft ? new Color(105, 159, 83) : new Color(75, 82, 77));
-            g.fillRoundRect(x + 20, buttonY, cardWidth - 40, 50, 13, 13);
-            g.setColor(canCraft ? new Color(194, 232, 167) : new Color(141, 149, 141));
-            g.drawRoundRect(x + 20, buttonY, cardWidth - 40, 50, 13, 13);
-            g.setFont(new Font("SansSerif", Font.BOLD, 15));
-            g.setColor(new Color(245, 247, 238));
-            String button = canCraft ? "WYTWÓRZ" : "BRAK SKŁADNIKÓW";
-            g.drawString(button, x + (cardWidth - g.getFontMetrics().stringWidth(button)) / 2, buttonY + 31);
+        for (int recipe = 0; recipe < CRAFT_OUTPUTS.length; recipe++) {
+            int x = panelX + CRAFT_RECIPE_X + recipe * CRAFT_RECIPE_STEP;
+            int y = panelY + CRAFT_RECIPE_Y;
+            drawClassicButton(g, x, y, CRAFT_RECIPE_WIDTH, CRAFT_RECIPE_HEIGHT, selectedRecipe == recipe);
+            drawBlockIcon(g, x + (CRAFT_RECIPE_WIDTH - 40) / 2, y + 4, CRAFT_OUTPUTS[recipe]);
+            g.setColor(cachedColor(35, 35, 35));
+            g.setFont(uiFont(Font.BOLD, 10));
+            String label = shorten(CRAFT_RECIPE_NAMES[recipe], 12);
+            g.drawString(label, x + (CRAFT_RECIPE_WIDTH - g.getFontMetrics().stringWidth(label)) / 2, y + 66);
         }
-        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g.setColor(new Color(207, 225, 208));
-        g.drawString(craftMessage.isEmpty() ? "Wybierz recepturę i naciśnij WYTWÓRZ." : craftMessage,
-                panelX + 26, panelY + 603);
+
+        int gridX = panelX + CRAFT_GRID_X, gridY = panelY + CRAFT_GRID_Y;
+        for (int slot = 0; slot < 9; slot++) {
+            int x = gridX + (slot % 3) * (CRAFT_SLOT_SIZE + CRAFT_SLOT_GAP);
+            int y = gridY + (slot / 3) * (CRAFT_SLOT_SIZE + CRAFT_SLOT_GAP);
+            drawClassicSlot(g, x, y, CRAFT_SLOT_SIZE, craftingIngredient(selectedRecipe, slot), -1, false);
+        }
+
+        int arrowY = gridY + (3 * CRAFT_SLOT_SIZE + 2 * CRAFT_SLOT_GAP) / 2;
+        g.setColor(cachedColor(132, 132, 132));
+        g.fillRect(panelX + 305, arrowY - 4, 92, 8);
+        g.fillPolygon(new int[]{panelX + 397, panelX + 421, panelX + 397},
+                new int[]{arrowY - 14, arrowY, arrowY + 14}, 3);
+
+        int outputX = panelX + CRAFT_OUTPUT_X;
+        int outputY = gridY + (3 * CRAFT_SLOT_SIZE + 2 * CRAFT_SLOT_GAP - CRAFT_OUTPUT_SIZE) / 2;
+        drawClassicSlot(g, outputX, outputY, CRAFT_OUTPUT_SIZE, CRAFT_OUTPUTS[selectedRecipe],
+                CRAFT_OUTPUT_COUNTS[selectedRecipe], creativeMode || canCraftRecipe(selectedRecipe));
+
+        g.setFont(MONOSPACED_BOLD_14);
+        g.setColor(cachedColor(48, 48, 48));
+        g.drawString("Inventory", panelX + 32, panelY + 350);
+        byte[] items = craftingInventoryItems();
+        int inventoryGridWidth = 9 * CRAFT_INVENTORY_SLOT_SIZE + 8 * CRAFT_INVENTORY_GAP;
+        int inventoryX = panelX + (INVENTORY_WIDTH - inventoryGridWidth) / 2;
+        int inventoryY = panelY + CRAFT_INVENTORY_TOP;
+        for (int slot = 0; slot < 27; slot++) {
+            int x = inventoryX + (slot % 9) * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            int y = inventoryY + (slot / 9) * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            byte item = slot < items.length ? items[slot] : World.AIR;
+            drawClassicSlot(g, x, y, CRAFT_INVENTORY_SLOT_SIZE, item,
+                    item == World.AIR ? 0 : inventory[item & 0xff], false);
+        }
+
+        int hotbarWidth = hotbar.length * CRAFT_INVENTORY_SLOT_SIZE + (hotbar.length - 1) * CRAFT_INVENTORY_GAP;
+        int hotbarX = panelX + (INVENTORY_WIDTH - hotbarWidth) / 2;
+        int hotbarY = panelY + CRAFT_HOTBAR_TOP;
+        for (int slot = 0; slot < hotbar.length; slot++) {
+            int x = hotbarX + slot * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            drawClassicSlot(g, x, hotbarY, CRAFT_INVENTORY_SLOT_SIZE, hotbar[slot],
+                    creativeMode ? 0 : inventory[hotbar[slot] & 0xff], slot == customizeSlot);
+        }
+        g.setFont(uiFont(Font.PLAIN, 12));
+        g.setColor(cachedColor(55, 55, 55));
+        String hint = craftMessage.isEmpty() ? "Kliknij recepturę, potem wynik, aby wytworzyć przedmiot." : craftMessage;
+        g.drawString(hint, panelX + 300, panelY + 350);
+    }
+
+    private byte[] craftingInventoryItems() {
+        byte[] items = new byte[27];
+        int count = 0;
+        for (byte type : BLOCK_TYPES) {
+            if ((creativeMode || inventory[type & 0xff] > 0) && count < items.length) items[count++] = type;
+        }
+        return Arrays.copyOf(items, count);
+    }
+
+    private static byte craftingIngredient(int recipe, int slot) {
+        if (recipe == 0) return slot == 4 ? World.WOOD : World.AIR;
+        if (recipe == 1) return slot == 1 || slot == 4 ? World.PLANKS : slot == 7 ? World.COAL_ORE : World.AIR;
+        return World.EMERALD_ORE;
+    }
+
+    private void drawClassicSlot(Graphics2D g, int x, int y, int size, byte item, int count, boolean selected) {
+        g.setColor(cachedColor(55, 55, 55));
+        g.fillRect(x, y, size, size);
+        g.setColor(Color.WHITE);
+        g.drawLine(x + 1, y + 1, x + size - 2, y + 1);
+        g.drawLine(x + 1, y + 1, x + 1, y + size - 2);
+        g.setColor(cachedColor(83, 83, 83));
+        g.drawLine(x + 1, y + size - 2, x + size - 2, y + size - 2);
+        g.drawLine(x + size - 2, y + 1, x + size - 2, y + size - 2);
+        g.setColor(cachedColor(139, 139, 139));
+        g.fillRect(x + 3, y + 3, size - 6, size - 6);
+        if (selected) {
+            g.setColor(cachedColor(255, 230, 92));
+            g.drawRect(x + 2, y + 2, size - 5, size - 5);
+        }
+        if (item == World.AIR) return;
+        drawBlockIcon(g, x + (size - 40) / 2, y + (size - 36) / 2, item);
+        if (count > 1 || creativeMode && count == 0) {
+            String amount = count > 1 ? Integer.toString(count) : "∞";
+            g.setFont(uiFont(Font.BOLD, 11));
+            int textX = x + size - 5 - g.getFontMetrics().stringWidth(amount);
+            g.setColor(cachedColor(40, 40, 40));
+            g.drawString(amount, textX + 1, y + size - 5 + 1);
+            g.setColor(Color.WHITE);
+            g.drawString(amount, textX, y + size - 6);
+        }
+    }
+
+    private void drawClassicButton(Graphics2D g, int x, int y, int width, int height, boolean selected) {
+        g.setColor(selected ? cachedColor(179, 179, 179) : cachedColor(166, 166, 166));
+        g.fillRect(x, y, width, height);
+        g.setColor(selected ? cachedColor(80, 80, 80) : Color.WHITE);
+        g.drawLine(x, y, x + width - 1, y);
+        g.drawLine(x, y, x, y + height - 1);
+        g.setColor(selected ? Color.WHITE : cachedColor(72, 72, 72));
+        g.drawLine(x, y + height - 1, x + width - 1, y + height - 1);
+        g.drawLine(x + width - 1, y, x + width - 1, y + height - 1);
     }
 
     private static String shorten(String text, int maxLength) {
@@ -1458,6 +1808,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private void handleInventoryClick(int mouseX, int mouseY) {
+        pendingActions.add(() -> processInventoryClick(mouseX, mouseY));
+    }
+
+    private void processInventoryClick(int mouseX, int mouseY) {
         int x = INVENTORY_PANEL_X, y = INVENTORY_PANEL_Y;
         if (inside(mouseX, mouseY, x + INVENTORY_WIDTH - 51, y + 15, 34, 32)) {
             closeInventory();
@@ -1471,38 +1825,75 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             }
         }
         if (inventoryTab == 3) {
-            int startX = x + 24, cardY = y + 123, cardWidth = 296, buttonY = cardY + 340;
-            for (int recipe = 0; recipe < 3; recipe++) {
-                int cardX = startX + recipe * 310;
-                if (inside(mouseX, mouseY, cardX + 20, buttonY, cardWidth - 40, 50)) {
+            for (int recipe = 0; recipe < CRAFT_OUTPUTS.length; recipe++) {
+                int recipeX = x + CRAFT_RECIPE_X + recipe * CRAFT_RECIPE_STEP;
+                int recipeY = y + CRAFT_RECIPE_Y;
+                if (inside(mouseX, mouseY, recipeX, recipeY, CRAFT_RECIPE_WIDTH, CRAFT_RECIPE_HEIGHT)) {
                     selectedRecipe = recipe;
-                    if (creativeMode || canCraftRecipe(recipe)) craftRecipe(recipe);
-                    else craftMessage = "Brakuje składników do tej receptury.";
+                    craftMessage = "";
                     return;
                 }
-                if (inside(mouseX, mouseY, cardX, cardY, cardWidth, 325)) {
-                    selectedRecipe = recipe;
+            }
+
+            int outputX = x + CRAFT_OUTPUT_X;
+            int outputY = y + CRAFT_GRID_Y
+                    + (3 * CRAFT_SLOT_SIZE + 2 * CRAFT_SLOT_GAP - CRAFT_OUTPUT_SIZE) / 2;
+            if (inside(mouseX, mouseY, outputX, outputY, CRAFT_OUTPUT_SIZE, CRAFT_OUTPUT_SIZE)) {
+                if (creativeMode || canCraftRecipe(selectedRecipe)) craftRecipe(selectedRecipe);
+                else craftMessage = "Brakuje składników do tej receptury.";
+                return;
+            }
+
+            int hotbarWidth = hotbar.length * CRAFT_INVENTORY_SLOT_SIZE
+                    + (hotbar.length - 1) * CRAFT_INVENTORY_GAP;
+            int hotbarX = x + (INVENTORY_WIDTH - hotbarWidth) / 2;
+            int hotbarY = y + CRAFT_HOTBAR_TOP;
+            for (int slot = 0; slot < hotbar.length; slot++) {
+                int tileX = hotbarX + slot * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+                if (inside(mouseX, mouseY, tileX, hotbarY,
+                        CRAFT_INVENTORY_SLOT_SIZE, CRAFT_INVENTORY_SLOT_SIZE)) {
+                    customizeSlot = slot;
+                    selectedBlock = slot;
+                    return;
+                }
+            }
+
+            byte[] items = craftingInventoryItems();
+            int inventoryGridWidth = 9 * CRAFT_INVENTORY_SLOT_SIZE + 8 * CRAFT_INVENTORY_GAP;
+            int inventoryX = x + (INVENTORY_WIDTH - inventoryGridWidth) / 2;
+            int inventoryY = y + CRAFT_INVENTORY_TOP;
+            for (int slot = 0; slot < items.length; slot++) {
+                int tileX = inventoryX + (slot % 9) * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+                int tileY = inventoryY + (slot / 9) * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+                if (inside(mouseX, mouseY, tileX, tileY,
+                        CRAFT_INVENTORY_SLOT_SIZE, CRAFT_INVENTORY_SLOT_SIZE)) {
+                    hotbar[customizeSlot] = items[slot];
+                    selectedBlock = customizeSlot;
                     return;
                 }
             }
             return;
         }
 
-        int cardY = y + 112;
-        int hotbarX = x + 22 + 12, hotbarY = cardY + 46;
+        int hotbarWidth = hotbar.length * CRAFT_INVENTORY_SLOT_SIZE + (hotbar.length - 1) * CRAFT_INVENTORY_GAP;
+        int hotbarX = x + (INVENTORY_WIDTH - hotbarWidth) / 2, hotbarY = y + 542;
         for (int slot = 0; slot < hotbar.length; slot++) {
-            int col = slot % 2, row = slot / 2;
-            int tileX = hotbarX + col * 137, tileY = hotbarY + row * 73;
-            if (inside(mouseX, mouseY, tileX, tileY, 130, 64)) {
+            int tileX = hotbarX + slot * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            if (inside(mouseX, mouseY, tileX, hotbarY,
+                    CRAFT_INVENTORY_SLOT_SIZE, CRAFT_INVENTORY_SLOT_SIZE)) {
                 customizeSlot = slot;
+                selectedBlock = slot;
                 return;
             }
         }
-        int catalogX = x + 337 + 8, catalogY = cardY + 43;
+        int gridWidth = 9 * CRAFT_INVENTORY_SLOT_SIZE + 8 * CRAFT_INVENTORY_GAP;
+        int catalogX = x + (INVENTORY_WIDTH - gridWidth) / 2, catalogY = y + 140;
         byte[] items = inventoryItems(inventoryTab);
         for (int i = 0; i < items.length; i++) {
-            int tileX = catalogX + (i % 5) * 116, tileY = catalogY + (i / 5) * 70;
-            if (inside(mouseX, mouseY, tileX, tileY, 112, 64)) {
+            int tileX = catalogX + (i % 9) * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            int tileY = catalogY + (i / 9) * (CRAFT_INVENTORY_SLOT_SIZE + CRAFT_INVENTORY_GAP);
+            if (inside(mouseX, mouseY, tileX, tileY,
+                    CRAFT_INVENTORY_SLOT_SIZE, CRAFT_INVENTORY_SLOT_SIZE)) {
                 hotbar[customizeSlot] = items[i];
                 selectedBlock = customizeSlot;
                 return;
@@ -1522,10 +1913,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 : cloudCoverage > 0.42f ? "Pochmurno" : daylight < 0.12f ? "Noc" : "Słonecznie";
         String label = time + "  •  " + conditions + "  •  " + String.format("%.1fx", daySpeed);
         int x = centerX - 132, y = 22;
-        g.setColor(new Color(8, 19, 27, 150));
+        g.setColor(cachedColor(8, 19, 27, 150));
         g.fillRoundRect(x, y, 264, 34, 14, 14);
-        g.setFont(new Font("SansSerif", Font.BOLD, 14));
-        g.setColor(new Color(240, 244, 231));
+        g.setFont(uiFont(Font.BOLD, 14));
+        g.setColor(cachedColor(240, 244, 231));
         g.drawString(label, centerX - g.getFontMetrics().stringWidth(label) / 2, y + 22);
     }
 
@@ -1536,22 +1927,94 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         Graphics2D rain = (Graphics2D) g.create();
         rain.scale((double) WINDOW_WIDTH / VIEW_WIDTH, (double) WINDOW_HEIGHT / VIEW_HEIGHT);
         rain.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-        rain.setColor(new Color(174, 216, 236, (int) (145 * rainIntensity)));
+        rain.setColor(cachedColor(174, 216, 236, (int) (145 * rainIntensity)));
         int driftX = (int) (rainPhase * 0.35f);
         int driftY = (int) (rainPhase * 1.1f);
         int drops = (int) (150 * rainIntensity);
-        for (int i = 0; i < drops; i++) {
-            int dropX = Math.floorMod(i * 47 + driftX, VIEW_WIDTH);
-            int dropY = Math.floorMod(i * 83 + driftY, VIEW_HEIGHT);
-            rain.fillRect(dropX, dropY, 1, 3 + (i & 1));
+        float cosYaw = (float) Math.cos(yaw), sinYaw = (float) Math.sin(yaw);
+        float cosPitch = (float) Math.cos(pitch), sinPitch = (float) Math.sin(pitch);
+        float fx = sinYaw * cosPitch, fy = sinPitch, fz = cosYaw * cosPitch;
+        float rx = cosYaw, rz = -sinYaw;
+        float ux = -sinYaw * sinPitch, uy = cosPitch, uz = -cosYaw * sinPitch;
+        int drawn = 0;
+        for (int attempt = 0; attempt < drops * 8 && drawn < drops; attempt++) {
+            int sourceX = Math.min(VIEW_WIDTH - 1, (int) (noiseHash(attempt, 17,
+                    seed ^ 0x6a09e667f3bcc909L) * VIEW_WIDTH));
+            int sourceY = Math.min(VIEW_HEIGHT - 1, (int) (noiseHash(attempt, 43,
+                    seed ^ 0xbb67ae8584caa73bL) * VIEW_HEIGHT));
+            if (cloudOpacityAtScreen(sourceX, sourceY, fx, fy, fz, rx, rz, ux, uy, uz) <= 0) continue;
+            int dropX = Math.floorMod(sourceX + driftX, VIEW_WIDTH);
+            int dropY = Math.floorMod(sourceY + driftY, VIEW_HEIGHT);
+            int length = 3 + (int) (noiseHash(attempt, 71, seed ^ 0x3c6ef372fe94f82bL) * 4);
+            rain.fillRect(dropX, dropY, 1, length);
+            drawn++;
         }
         rain.dispose();
+    }
+
+    private float cloudOpacityAtScreen(int px, int py, float fx, float fy, float fz,
+                                       float rx, float rz, float ux, float uy, float uz) {
+        float sx = columnX[px], sy = columnY[py];
+        float dx = fx + rx * sx + ux * sy;
+        float dy = fy + uy * sy;
+        float dz = fz + rz * sx + uz * sy;
+        float inverseLength = 1.0f / (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return cloudOpacity(dy * inverseLength, dx * inverseLength, dz * inverseLength);
+    }
+
+    private void drawRainSplashes(Graphics2D g) {
+        if (rainSplashes.isEmpty()) return;
+        float eyeX = playerX, eyeY = playerY + 1.62f, eyeZ = playerZ;
+        float cosYaw = (float) Math.cos(yaw), sinYaw = (float) Math.sin(yaw);
+        float cosPitch = (float) Math.cos(pitch), sinPitch = (float) Math.sin(pitch);
+        float fx = sinYaw * cosPitch, fy = sinPitch, fz = cosYaw * cosPitch;
+        float rx = cosYaw, rz = -sinYaw;
+        float ux = -sinYaw * sinPitch, uy = cosPitch, uz = -cosYaw * sinPitch;
+        float focalLength = (VIEW_HEIGHT * 0.5f) / (float) Math.tan(FOV * 0.5f);
+
+        for (RainSplash splash : rainSplashes) {
+            float dx = splash.x - eyeX, dy = splash.y - eyeY, dz = splash.z - eyeZ;
+            float distance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+            float depth = dx * fx + dy * fy + dz * fz;
+            if (depth <= 0.1f) continue;
+            float screenRight = (dx * rx + dz * rz) / depth;
+            float screenUp = (dx * ux + dy * uy + dz * uz) / depth;
+            float pixelX = VIEW_WIDTH * 0.5f + screenRight * focalLength;
+            float pixelY = VIEW_HEIGHT * 0.5f - screenUp * focalLength;
+            if (pixelX < 0 || pixelY < 0 || pixelX >= VIEW_WIDTH || pixelY >= VIEW_HEIGHT) continue;
+
+            float inverseLength = 1.0f / distance;
+            Hit surface = trace(eyeX, eyeY, eyeZ, dx * inverseLength, dy * inverseLength, dz * inverseLength,
+                    distance + 0.7f, false, traceScratch[0]);
+            if (surface.type == World.AIR) continue;
+
+            int x = Math.round(pixelX * WINDOW_WIDTH / VIEW_WIDTH);
+            int y = Math.round(pixelY * WINDOW_HEIGHT / VIEW_HEIGHT);
+            boolean waterImpact = surface.type == World.WATER;
+            float lifetime = waterImpact ? 0.48f : 0.34f;
+            float progress = Math.min(1.0f, splash.age / lifetime);
+            int alpha = Math.max(0, Math.round((waterImpact ? 175 : 205) * (1.0f - progress)));
+            g.setColor(waterImpact ? cachedColor(164, 224, 239, alpha) : cachedColor(205, 230, 238, alpha));
+            g.setStroke(RAIN_SPLASH_STROKE);
+            if (waterImpact) {
+                int radius = 2 + Math.round(progress * 7);
+                g.drawOval(x - radius, y - Math.max(1, radius / 3), radius * 2, Math.max(2, radius / 2));
+                if (progress < 0.35f) g.drawArc(x - radius - 2, y - radius, radius * 2 + 4, radius * 2, 205, 125);
+            } else {
+                for (int particle = 0; particle < 3; particle++) {
+                    float angle = ((splash.randomBits >>> (particle * 8)) & 0xff) * ((float) (Math.PI * 2) / 256.0f);
+                    int endX = x + Math.round((float) Math.sin(angle) * (2.0f + progress * 6.0f));
+                    int endY = y - Math.round(1.0f + progress * 5.0f + Math.abs((float) Math.cos(angle)) * 3.0f);
+                    g.drawLine(x, y, endX, endY);
+                }
+            }
+        }
     }
 
     private void drawSurvivalIndicators(Graphics2D g) {
         boolean underwater = isHeadUnderwater();
         int panelX = WINDOW_WIDTH - 330, panelY = 16;
-        g.setColor(new Color(8, 19, 27, 168));
+        g.setColor(cachedColor(8, 19, 27, 168));
         g.fillRoundRect(panelX, panelY, 310, underwater ? 99 : 69, 14, 14);
         int startX = panelX + 9;
         for (int i = 0; i < 10; i++) {
@@ -1559,8 +2022,8 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             drawMeatIcon(g, startX + i * 21, panelY + 32, hunger >= (i + 1) * 10);
             if (underwater) drawBubbleIcon(g, startX + i * 21, panelY + 69, oxygen >= (i + 1) * 10);
         }
-        g.setFont(new Font("SansSerif", Font.BOLD, 11));
-        g.setColor(new Color(250, 245, 233));
+        g.setFont(uiFont(Font.BOLD, 11));
+        g.setColor(cachedColor(250, 245, 233));
         g.drawString("M×" + meatCount, panelX + 226, panelY + 42);
         g.drawString("G×" + mushroomCount(), panelX + 226, panelY + 59);
     }
@@ -1573,231 +2036,258 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         heart.curveTo(x + 12, y, x + 18, y + 1, x + 18, y + 6);
         heart.curveTo(x + 18, y + 10, x + 11, y + 15, x + 9, y + 17);
         heart.closePath();
-        g.setColor(filled ? new Color(221, 58, 72) : new Color(89, 59, 66));
+        g.setColor(filled ? cachedColor(221, 58, 72) : cachedColor(89, 59, 66));
         g.fill(heart);
-        g.setColor(new Color(255, 225, 222, 180));
+        g.setColor(cachedColor(255, 225, 222, 180));
         g.draw(heart);
     }
 
     private void drawMeatIcon(Graphics2D g, int x, int y, boolean filled) {
-        g.setColor(filled ? new Color(171, 73, 58) : new Color(88, 69, 65));
+        g.setColor(filled ? cachedColor(171, 73, 58) : cachedColor(88, 69, 65));
         g.fillOval(x + 5, y + 3, 13, 11);
-        g.setColor(filled ? new Color(239, 173, 143) : new Color(155, 147, 139));
+        g.setColor(filled ? cachedColor(239, 173, 143) : cachedColor(155, 147, 139));
         g.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         g.drawLine(x + 4, y + 12, x + 1, y + 15);
         g.fillOval(x, y + 12, 5, 5);
         g.fillOval(x + 3, y + 15, 5, 5);
         if (filled) {
-            g.setColor(new Color(248, 205, 164));
+            g.setColor(cachedColor(248, 205, 164));
             g.fillOval(x + 9, y + 5, 4, 3);
         }
     }
 
     private void drawBubbleIcon(Graphics2D g, int x, int y, boolean filled) {
-        g.setColor(filled ? new Color(103, 210, 236) : new Color(78, 111, 126));
+        g.setColor(filled ? cachedColor(103, 210, 236) : cachedColor(78, 111, 126));
         g.fillOval(x + 2, y + 2, 15, 15);
-        g.setColor(filled ? new Color(220, 250, 255) : new Color(155, 181, 189));
+        g.setColor(filled ? cachedColor(220, 250, 255) : cachedColor(155, 181, 189));
         g.setStroke(new BasicStroke(1.4f));
         g.drawOval(x + 2, y + 2, 15, 15);
         if (filled) g.fillOval(x + 6, y + 5, 4, 4);
     }
 
     private void drawLobby(Graphics2D g, int cx, int cy) {
-        g.setColor(new Color(5, 13, 17, 142));
+        g.setColor(cachedColor(5, 13, 17, 142));
         g.fillRect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
 
         int x = cx - 340, y = cy - 350, width = 680, height = 700;
-        g.setColor(new Color(12, 25, 30, 238));
-        g.fillRoundRect(x, y, width, height, 28, 28);
-        g.setColor(new Color(205, 230, 213, 185));
-        g.setStroke(new BasicStroke(1.4f));
-        g.drawRoundRect(x, y, width, height, 28, 28);
+        drawClassicPanel(g, x, y, width, height, 198);
 
-        g.setColor(new Color(174, 219, 154));
-        g.setFont(new Font("SansSerif", Font.BOLD, 34));
+        g.setColor(cachedColor(45, 45, 45));
+        g.setFont(MONOSPACED_BOLD_34);
         String title = "TYTANCRAFT";
         g.drawString(title, cx - g.getFontMetrics().stringWidth(title) / 2, y + 59);
-        g.setColor(new Color(222, 235, 224));
-        g.setFont(new Font("SansSerif", Font.PLAIN, 15));
+        g.setColor(cachedColor(67, 67, 67));
+        g.setFont(MONOSPACED_PLAIN_12);
         String subtitle = "LOBBY  /  PRZYGOTUJ SIĘ DO WYPRAWY";
         g.drawString(subtitle, cx - g.getFontMetrics().stringWidth(subtitle) / 2, y + 87);
-        g.setColor(new Color(255, 255, 255, 42));
+        g.setColor(cachedColor(128, 128, 128));
         g.drawLine(x + 30, y + 108, x + width - 30, y + 108);
 
-        int cardY = y + 132, cardHeight = 395, cardWidth = 296;
-        int leftX = x + 31, rightX = x + width - 31 - cardWidth;
+        int cardY = lobbyCardY(cy), cardHeight = LOBBY_CARD_HEIGHT, cardWidth = LOBBY_CARD_WIDTH;
+        int leftX = lobbyLeftCardX(cx), rightX = lobbyRightCardX(cx);
         drawLobbyCard(g, leftX, cardY, cardWidth, cardHeight, "GRACZ");
         drawLobbyCard(g, rightX, cardY, cardWidth, cardHeight, "ŚWIAT");
 
-        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g.setColor(new Color(182, 202, 190));
+        g.setFont(uiFont(Font.BOLD, 12));
+        g.setColor(cachedColor(50, 50, 50));
         g.drawString("NAZWA GRACZA", leftX + 18, cardY + 57);
-        int nameX = leftX + 17, nameY = cardY + 69, nameWidth = cardWidth - 34;
-        g.setColor(nicknameFocused ? new Color(42, 63, 48) : new Color(22, 39, 42));
-        g.fillRoundRect(nameX, nameY, nameWidth, 51, 12, 12);
-        g.setColor(nicknameFocused ? new Color(173, 220, 151) : new Color(107, 133, 119));
-        g.setStroke(new BasicStroke(nicknameFocused ? 2 : 1));
-        g.drawRoundRect(nameX, nameY, nameWidth, 51, 12, 12);
-        g.setColor(Color.WHITE);
-        g.setFont(new Font("SansSerif", Font.BOLD, 18));
+        int nameX = leftX + LOBBY_NICKNAME_X, nameY = cardY + LOBBY_NICKNAME_Y;
+        drawClassicPanel(g, nameX, nameY, LOBBY_NICKNAME_WIDTH, LOBBY_NICKNAME_HEIGHT,
+                nicknameFocused ? 224 : 194);
+        g.setColor(cachedColor(35, 35, 35));
+        g.setFont(MONOSPACED_BOLD_14);
         String name = nickname.isEmpty() ? "Wpisz nick..." : nickname;
         g.drawString(name, nameX + 15, nameY + 32);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g.setColor(new Color(172, 194, 180));
+        g.setFont(MONOSPACED_PLAIN_12);
+        g.setColor(cachedColor(65, 65, 65));
         g.drawString("LOKALNY GRACZ", leftX + 19, cardY + 158);
-        g.setColor(new Color(133, 205, 117));
+        g.setColor(cachedColor(88, 88, 88));
         g.fillOval(leftX + 19, cardY + 177, 10, 10);
-        g.setFont(new Font("SansSerif", Font.BOLD, 15));
-        g.setColor(new Color(237, 243, 233));
+        g.setFont(uiFont(Font.BOLD, 15));
+        g.setColor(cachedColor(43, 43, 43));
         g.drawString(nickname.isEmpty() ? "Gracz" : nickname, leftX + 38, cardY + 188);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        g.setColor(new Color(153, 191, 153));
+        g.setFont(MONOSPACED_PLAIN_12);
+        g.setColor(cachedColor(72, 72, 72));
         g.drawString("GOTOWY", leftX + cardWidth - 82, cardY + 188);
 
-        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g.setColor(new Color(182, 202, 190));
+        g.setFont(uiFont(Font.BOLD, 10));
+        g.setColor(cachedColor(57, 57, 57));
+        g.drawString("ZAPISANE ŚWIATY · F5 W GRZE", leftX + 18, cardY + 218);
+        int visibleSaves = Math.min(5, Math.max(0, savedWorlds.size() - savedWorldOffset));
+        if (visibleSaves == 0) {
+            g.setFont(uiFont(Font.PLAIN, 12));
+            g.setColor(cachedColor(83, 83, 83));
+            g.drawString("Nowy świat zapisze się po zamknięciu gry", leftX + 18, cardY + 246);
+        }
+        for (int row = 0; row < visibleSaves; row++) {
+            WorldStorage.SaveInfo save = savedWorlds.get(savedWorldOffset + row);
+            int buttonY = cardY + LOBBY_SAVED_LIST_Y + row * LOBBY_SAVED_ROW_STEP;
+            boolean selected = loadedSave && save.seed == seed;
+            drawClassicButton(g, leftX + 15, buttonY, cardWidth - 30, LOBBY_SAVED_ROW_HEIGHT, selected);
+            g.setFont(uiFont(Font.BOLD, 11));
+            g.setColor(cachedColor(42, 42, 42));
+            String label = "Świat " + Long.toUnsignedString(save.seed);
+            g.drawString(label, leftX + 27, buttonY + 18);
+            g.setFont(uiFont(Font.PLAIN, 9));
+            g.setColor(cachedColor(65, 65, 65));
+            String hint = selected ? "WCZYTANO" : "KLIKNIJ, ABY WCZYTAĆ";
+            g.drawString(hint, leftX + cardWidth - 25 - g.getFontMetrics().stringWidth(hint), buttonY + 18);
+        }
+        if (savedWorlds.size() > 5) {
+            g.setFont(uiFont(Font.PLAIN, 9));
+            g.setColor(cachedColor(83, 83, 83));
+            g.drawString("Kółko myszy: starsze / nowsze zapisy", leftX + 18, cardY + 388);
+        }
+
+        g.setFont(uiFont(Font.BOLD, 12));
+        g.setColor(cachedColor(52, 52, 52));
         g.drawString("TRYB GRY", rightX + 18, cardY + 55);
-        int modeY = cardY + 65, modeButtonHeight = 34;
-        drawLobbyModeButton(g, rightX + 17, modeY, 122, modeButtonHeight, "PRZETRWANIE", !creativeMode);
-        drawLobbyModeButton(g, rightX + 151, modeY, 128, modeButtonHeight, "KREATYWNY", creativeMode);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        g.setColor(new Color(172, 194, 180));
+        int modeY = cardY + LOBBY_MODE_Y;
+        drawClassicTabButton(g, rightX + LOBBY_SURVIVAL_X, modeY, LOBBY_SURVIVAL_WIDTH,
+                LOBBY_MODE_HEIGHT, "PRZETRWANIE", !creativeMode);
+        drawClassicTabButton(g, rightX + LOBBY_CREATIVE_X, modeY, LOBBY_CREATIVE_WIDTH,
+                LOBBY_MODE_HEIGHT, "KREATYWNY", creativeMode);
+        g.setFont(uiFont(Font.PLAIN, 12));
+        g.setColor(cachedColor(67, 67, 67));
         g.drawString(creativeMode ? "Lot • nieograniczone bloki" : "Zbieraj bloki • dbaj o zdrowie", rightX + 18, cardY + 119);
-        g.setColor(new Color(255, 255, 255, 42));
+        g.setColor(cachedColor(135, 135, 135));
         g.drawLine(rightX + 18, cardY + 132, rightX + cardWidth - 18, cardY + 132);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        g.setColor(new Color(182, 202, 190));
+        g.setFont(uiFont(Font.PLAIN, 11));
+        g.setColor(cachedColor(65, 65, 65));
         g.drawString("ZIARNO ŚWIATA", rightX + 18, cardY + 152);
-        g.setFont(new Font("Monospaced", Font.BOLD, 14));
-        g.setColor(new Color(218, 232, 205));
+        g.setFont(MONOSPACED_BOLD_14);
+        g.setColor(cachedColor(42, 42, 42));
         g.drawString(Long.toUnsignedString(seed), rightX + 18, cardY + 174);
-        g.setFont(new Font("SansSerif", Font.BOLD, 11));
-        g.setColor(creativeMode ? new Color(127, 143, 134) : new Color(182, 202, 190));
+        g.setFont(uiFont(Font.BOLD, 11));
+        g.setColor(cachedColor(55, 55, 55));
         g.drawString("AGRESYWNOŚĆ ZWIERZĄT", rightX + 18, cardY + 198);
         String aggressionValue = creativeMode ? "—" : aggressionLevel + "%";
         g.drawString(aggressionValue, rightX + cardWidth - 18 - g.getFontMetrics().stringWidth(aggressionValue), cardY + 198);
-        int sliderX = rightX + 20, sliderY = cardY + 211, sliderWidth = cardWidth - 40;
-        g.setColor(new Color(255, 255, 255, 48));
-        g.fillRoundRect(sliderX, sliderY, sliderWidth, 6, 6, 6);
+        int sliderX = cx + LOBBY_SLIDER_X, sliderY = cardY + LOBBY_AGGRESSION_Y;
+        int sliderWidth = LOBBY_SLIDER_WIDTH;
+        drawClassicSliderTrack(g, sliderX, sliderY, sliderWidth);
         int knobX = sliderX + sliderWidth * aggressionLevel / 100;
-        g.setColor(creativeMode ? new Color(105, 119, 111) : new Color(146, 202, 121));
-        g.fillRoundRect(sliderX, sliderY, knobX - sliderX, 6, 6, 6);
-        g.fillOval(knobX - 8, sliderY - 5, 16, 16);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        g.setColor(new Color(164, 184, 171));
+        g.setColor(cachedColor(83, 83, 83));
+        g.fillRect(sliderX, sliderY + 1, knobX - sliderX, 4);
+        drawClassicButton(g, knobX - 8, sliderY - 5, 16, 16, false);
+        g.setFont(uiFont(Font.PLAIN, 10));
+        g.setColor(cachedColor(70, 70, 70));
         g.drawString(creativeMode ? "Dostępne w trybie przetrwania"
                 : aggressionLevel < 35 ? "Spokojne" : aggressionLevel < 70 ? "Płochliwe" : "Atakujące",
                 rightX + 18, cardY + 235);
 
-        g.setFont(new Font("SansSerif", Font.BOLD, 11));
-        g.setColor(new Color(182, 202, 190));
+        g.setFont(uiFont(Font.BOLD, 11));
+        g.setColor(cachedColor(55, 55, 55));
         g.drawString("SZYBKOŚĆ PÓR DNIA", rightX + 18, cardY + 258);
         String speedLabel = String.format("%.1fx", daySpeed);
         g.drawString(speedLabel, rightX + cardWidth - 18 - g.getFontMetrics().stringWidth(speedLabel), cardY + 258);
-        int timeSliderX = rightX + 20, timeSliderY = cardY + 273, timeSliderWidth = cardWidth - 40;
-        g.setColor(new Color(255, 255, 255, 48));
-        g.fillRoundRect(timeSliderX, timeSliderY, timeSliderWidth, 6, 6, 6);
+        int timeSliderX = cx + LOBBY_SLIDER_X, timeSliderY = cardY + LOBBY_DAY_SPEED_Y;
+        int timeSliderWidth = LOBBY_SLIDER_WIDTH;
+        drawClassicSliderTrack(g, timeSliderX, timeSliderY, timeSliderWidth);
         int timeKnobX = timeSliderX + Math.round(timeSliderWidth * daySpeed / 8.0f);
-        g.setColor(new Color(116, 190, 218));
-        g.fillRoundRect(timeSliderX, timeSliderY, timeKnobX - timeSliderX, 6, 6, 6);
-        g.fillOval(timeKnobX - 8, timeSliderY - 5, 16, 16);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        g.setColor(new Color(164, 184, 171));
+        g.setColor(cachedColor(83, 83, 83));
+        g.fillRect(timeSliderX, timeSliderY + 1, timeKnobX - timeSliderX, 4);
+        drawClassicButton(g, timeKnobX - 8, timeSliderY - 5, 16, 16, false);
+        g.setFont(uiFont(Font.PLAIN, 10));
+        g.setColor(cachedColor(70, 70, 70));
         g.drawString("0x — zatrzymany", rightX + 18, cardY + 299);
         String maxSpeed = "8x";
         g.drawString(maxSpeed, rightX + cardWidth - 18 - g.getFontMetrics().stringWidth(maxSpeed), cardY + 299);
 
-        g.setFont(new Font("SansSerif", Font.BOLD, 11));
-        g.setColor(new Color(182, 202, 190));
+        g.setFont(uiFont(Font.BOLD, 11));
+        g.setColor(cachedColor(55, 55, 55));
         g.drawString("ZASIĘG RENDEROWANIA", rightX + 18, cardY + 326);
         String distanceLabel = renderDistance + "x";
         g.drawString(distanceLabel, rightX + cardWidth - 18 - g.getFontMetrics().stringWidth(distanceLabel), cardY + 326);
-        int distanceSliderY = cardY + 341;
-        g.setColor(new Color(255, 255, 255, 48));
-        g.fillRoundRect(timeSliderX, distanceSliderY, timeSliderWidth, 6, 6, 6);
+        int distanceSliderY = cardY + LOBBY_RENDER_DISTANCE_Y;
+        drawClassicSliderTrack(g, timeSliderX, distanceSliderY, timeSliderWidth);
         int distanceKnobX = timeSliderX + (renderDistance - 2) * timeSliderWidth / 6;
-        g.setColor(new Color(203, 174, 119));
-        g.fillRoundRect(timeSliderX, distanceSliderY, distanceKnobX - timeSliderX, 6, 6, 6);
-        g.fillOval(distanceKnobX - 8, distanceSliderY - 5, 16, 16);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        g.setColor(new Color(164, 184, 171));
+        g.setColor(cachedColor(83, 83, 83));
+        g.fillRect(timeSliderX, distanceSliderY + 1, distanceKnobX - timeSliderX, 4);
+        drawClassicButton(g, distanceKnobX - 8, distanceSliderY - 5, 16, 16, false);
+        g.setFont(uiFont(Font.PLAIN, 10));
+        g.setColor(cachedColor(70, 70, 70));
         g.drawString("2–8x widoku  •  dalej obraz znika we mgle", rightX + 18, cardY + 368);
 
-        int buttonX = cx - 165, buttonY = y + 565, buttonWidth = 330, buttonHeight = 63;
-        g.setColor(new Color(105, 159, 83));
-        g.fillRoundRect(buttonX, buttonY, buttonWidth, buttonHeight, 17, 17);
-        g.setColor(new Color(194, 232, 167));
-        g.setStroke(new BasicStroke(1.5f));
-        g.drawRoundRect(buttonX, buttonY, buttonWidth, buttonHeight, 17, 17);
-        g.setColor(new Color(16, 31, 22));
-        g.setFont(new Font("SansSerif", Font.BOLD, 18));
+        int buttonX = lobbyStartButtonX(cx), buttonY = lobbyStartButtonY(cy);
+        int buttonWidth = LOBBY_START_BUTTON_WIDTH, buttonHeight = LOBBY_START_BUTTON_HEIGHT;
+        drawClassicButton(g, buttonX, buttonY, buttonWidth, buttonHeight, false);
+        g.setColor(cachedColor(40, 40, 40));
+        g.setFont(MONOSPACED_BOLD_14);
         String startLabel = "WEJDŹ DO ŚWIATA";
         g.drawString(startLabel, cx - g.getFontMetrics().stringWidth(startLabel) / 2, buttonY + 39);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        g.setColor(new Color(173, 193, 179));
+        g.setFont(MONOSPACED_PLAIN_12);
+        g.setColor(cachedColor(62, 62, 62));
         String hint = "Kliknij pole, aby zmienić nick  •  ENTER rozpoczyna grę";
         g.drawString(hint, cx - g.getFontMetrics().stringWidth(hint) / 2, y + height - 20);
     }
 
     private void drawLobbyCard(Graphics2D g, int x, int y, int width, int height, String title) {
-        g.setColor(new Color(22, 39, 42, 232));
-        g.fillRoundRect(x, y, width, height, 18, 18);
-        g.setColor(new Color(255, 255, 255, 48));
-        g.setStroke(new BasicStroke(1));
-        g.drawRoundRect(x, y, width, height, 18, 18);
-        g.setColor(new Color(177, 215, 166));
-        g.setFont(new Font("SansSerif", Font.BOLD, 12));
+        drawClassicPanel(g, x, y, width, height, 178);
+        g.setColor(cachedColor(47, 47, 47));
+        g.setFont(MONOSPACED_BOLD_14);
         g.drawString(title, x + 18, y + 29);
     }
 
-    private void drawLobbyModeButton(Graphics2D g, int x, int y, int width, int height,
-                                     String label, boolean selected) {
-        g.setColor(selected ? new Color(91, 139, 76) : new Color(31, 49, 48));
-        g.fillRoundRect(x, y, width, height, 10, 10);
-        g.setColor(selected ? new Color(191, 225, 163) : new Color(255, 255, 255, 54));
-        g.setStroke(new BasicStroke(selected ? 1.5f : 1));
-        g.drawRoundRect(x, y, width, height, 10, 10);
-        g.setFont(new Font("SansSerif", Font.BOLD, 10));
-        g.setColor(selected ? Color.WHITE : new Color(190, 207, 194));
-        g.drawString(label, x + (width - g.getFontMetrics().stringWidth(label)) / 2,
-                y + (height + g.getFontMetrics().getAscent()) / 2 - 2);
+    private void drawClassicPanel(Graphics2D g, int x, int y, int width, int height, int fill) {
+        g.setColor(cachedColor(fill, fill, fill));
+        g.fillRect(x, y, width, height);
+        g.setColor(Color.WHITE);
+        g.drawLine(x, y, x + width - 1, y);
+        g.drawLine(x, y, x, y + height - 1);
+        g.setColor(cachedColor(58, 58, 58));
+        g.drawLine(x, y + height - 1, x + width - 1, y + height - 1);
+        g.drawLine(x + width - 1, y, x + width - 1, y + height - 1);
+        g.setColor(cachedColor(88, 88, 88));
+        g.drawRect(x + 1, y + 1, width - 3, height - 3);
+    }
+
+    private void drawClassicSliderTrack(Graphics2D g, int x, int y, int width) {
+        g.setColor(cachedColor(75, 75, 75));
+        g.fillRect(x, y, width, 7);
+        g.setColor(cachedColor(225, 225, 225));
+        g.drawLine(x + 1, y + 1, x + width - 2, y + 1);
+        g.setColor(cachedColor(130, 130, 130));
+        g.drawLine(x + 1, y + 5, x + width - 2, y + 5);
     }
 
     private void setAggressionFromMouse(int mouseX) {
-        int sliderX = WINDOW_WIDTH / 2 + 33;
-        int sliderWidth = 256;
+        int sliderX = WINDOW_WIDTH / 2 + LOBBY_SLIDER_X;
+        int sliderWidth = LOBBY_SLIDER_WIDTH;
         aggressionLevel = Math.max(0, Math.min(100, (mouseX - sliderX) * 100 / sliderWidth));
     }
 
     private void setDaySpeedFromMouse(int mouseX) {
-        int sliderX = WINDOW_WIDTH / 2 + 33;
-        int sliderWidth = 256;
+        int sliderX = WINDOW_WIDTH / 2 + LOBBY_SLIDER_X;
+        int sliderWidth = LOBBY_SLIDER_WIDTH;
         float value = Math.max(0, Math.min(8, (mouseX - sliderX) * 8.0f / sliderWidth));
         daySpeed = Math.round(value * 10.0f) / 10.0f;
     }
 
     private void setRenderDistanceFromMouse(int mouseX) {
-        int sliderX = WINDOW_WIDTH / 2 + 33;
-        int sliderWidth = 256;
+        int sliderX = WINDOW_WIDTH / 2 + LOBBY_SLIDER_X;
+        int sliderWidth = LOBBY_SLIDER_WIDTH;
         float proportion = Math.max(0, Math.min(1, (mouseX - sliderX) / (float) sliderWidth));
         renderDistance = 2 + Math.round(proportion * 6);
     }
 
     private void enterWorld() {
         if (nickname.isEmpty()) nickname = "Gracz";
-        Arrays.fill(inventory, 0);
-        if (!creativeMode) {
-            inventory[World.GRASS] = 32;
-            inventory[World.DIRT] = 32;
-            inventory[World.STONE] = 24;
-            inventory[World.SAND] = 16;
-            inventory[World.WOOD] = 16;
-            inventory[World.LEAVES] = 16;
-            inventory[World.COD_SPAWN_EGG] = 2;
-            inventory[World.SALMON_SPAWN_EGG] = 2;
-            inventory[World.TROPICAL_FISH_SPAWN_EGG] = 2;
-            inventory[World.PIKE_SPAWN_EGG] = 2;
-            inventory[World.CARP_SPAWN_EGG] = 2;
+        if (!loadedSave) {
+            Arrays.fill(inventory, 0);
+            if (!creativeMode) {
+                inventory[World.GRASS] = 32;
+                inventory[World.DIRT] = 32;
+                inventory[World.STONE] = 24;
+                inventory[World.SAND] = 16;
+                inventory[World.WOOD] = 16;
+                inventory[World.LEAVES] = 16;
+                inventory[World.COD_SPAWN_EGG] = 2;
+                inventory[World.SALMON_SPAWN_EGG] = 2;
+                inventory[World.TROPICAL_FISH_SPAWN_EGG] = 2;
+                inventory[World.PIKE_SPAWN_EGG] = 2;
+                inventory[World.CARP_SPAWN_EGG] = 2;
+            }
         }
         nicknameFocused = false;
         inLobby = false;
@@ -1805,209 +2295,148 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         captureMouse();
     }
 
+    private void refreshSavedWorlds() {
+        try {
+            savedWorlds = WorldStorage.list();
+        } catch (java.io.IOException error) {
+            savedWorlds = List.of();
+            saveMessage = "Nie można odczytać listy zapisów";
+        }
+    }
+
+    private void loadSavedWorld(WorldStorage.SaveInfo save) {
+        try {
+            WorldStorage.Data data = WorldStorage.load(save.path);
+            World loadedWorld = new World(data.seed, data.blocks, data.waterFlow, data.waterQueue);
+            Animal[] loadedAnimals = new Animal[data.animals.size()];
+            Random loadRandom = new Random(data.seed ^ 0x6a09e667f3bcc909L);
+            for (int i = 0; i < loadedAnimals.length; i++) {
+                WorldStorage.AnimalState state = data.animals.get(i);
+                Animal animal = new Animal(state.kind, state.x, state.z, state.y, loadRandom);
+                animal.alive = state.alive;
+                animal.health = state.health;
+                animal.x = state.x;
+                animal.y = state.y;
+                animal.z = state.z;
+                animal.yaw = state.yaw;
+                animal.gait = state.gait;
+                animal.updatePartAnimation();
+                animal.verticalVelocity = state.verticalVelocity;
+                animal.growth = state.growth;
+                animal.setBreedingCooldown(state.breedingCooldown);
+                loadedAnimals[i] = animal;
+            }
+
+            seed = data.seed;
+            world = loadedWorld;
+            spawnX = data.spawnX;
+            spawnZ = data.spawnZ;
+            creativeMode = data.creativeMode;
+            aggressionLevel = data.aggressionLevel;
+            renderDistance = data.renderDistance;
+            playerHealth = data.playerHealth;
+            meatCount = data.meatCount;
+            selectedBlock = data.selectedBlock;
+            weather = Weather.values()[data.weather];
+            daySpeed = data.daySpeed;
+            playerX = data.playerX;
+            playerY = data.playerY;
+            playerZ = data.playerZ;
+            yaw = data.yaw;
+            pitch = data.pitch;
+            hunger = data.hunger;
+            oxygen = data.oxygen;
+            dayTime = data.dayTime;
+            weatherTimer = data.weatherTimer;
+            cloudCoverage = data.cloudCoverage;
+            targetCloudCoverage = data.targetCloudCoverage;
+            rainIntensity = data.rainIntensity;
+            targetRainIntensity = data.targetRainIntensity;
+            cloudOffsetX = data.cloudOffsetX;
+            cloudOffsetY = data.cloudOffsetY;
+            rainPhase = data.rainPhase;
+            nickname = data.nickname;
+            System.arraycopy(data.inventory, 0, inventory, 0, inventory.length);
+            System.arraycopy(data.hotbar, 0, hotbar, 0, hotbar.length);
+            animals = loadedAnimals;
+            animalRandom = new Random(seed ^ 0x6a09e667f3bcc909L);
+            weatherRandom = new Random(seed ^ 0xbb67ae8584caa73bL);
+            loadedSave = true;
+            updateSunPosition();
+            saveMessage = "Wczytano świat " + Long.toUnsignedString(seed);
+            saveMessageTimer = 4.0f;
+        } catch (java.io.IOException | IllegalArgumentException error) {
+            saveMessage = "Nie udało się wczytać świata: " + error.getMessage();
+            saveMessageTimer = 6.0f;
+        }
+    }
+
+    private void saveWorldNow() {
+        try {
+            WorldStorage.Data data = new WorldStorage.Data();
+            data.seed = seed;
+            data.spawnX = spawnX;
+            data.spawnZ = spawnZ;
+            data.creativeMode = creativeMode;
+            data.aggressionLevel = aggressionLevel;
+            data.renderDistance = renderDistance;
+            data.playerHealth = playerHealth;
+            data.meatCount = meatCount;
+            data.selectedBlock = selectedBlock;
+            data.weather = weather.ordinal();
+            data.daySpeed = daySpeed;
+            data.playerX = playerX;
+            data.playerY = playerY;
+            data.playerZ = playerZ;
+            data.yaw = yaw;
+            data.pitch = pitch;
+            data.hunger = hunger;
+            data.oxygen = oxygen;
+            data.dayTime = dayTime;
+            data.weatherTimer = weatherTimer;
+            data.cloudCoverage = cloudCoverage;
+            data.targetCloudCoverage = targetCloudCoverage;
+            data.rainIntensity = rainIntensity;
+            data.targetRainIntensity = targetRainIntensity;
+            data.cloudOffsetX = cloudOffsetX;
+            data.cloudOffsetY = cloudOffsetY;
+            data.rainPhase = rainPhase;
+            data.nickname = nickname;
+            data.inventory = inventory.clone();
+            data.hotbar = hotbar.clone();
+            data.blocks = world.copyBlocks();
+            data.waterFlow = world.copyWaterFlow();
+            data.waterQueue = world.copyPendingWaterFlow();
+            data.animals = new ArrayList<>(animals.length);
+            for (Animal animal : animals) {
+                WorldStorage.AnimalState state = new WorldStorage.AnimalState();
+                state.kind = animal.kind;
+                state.alive = animal.alive;
+                state.health = animal.health;
+                state.x = animal.x;
+                state.y = animal.y;
+                state.z = animal.z;
+                state.yaw = animal.yaw;
+                state.gait = animal.gait;
+                state.verticalVelocity = animal.verticalVelocity;
+                state.growth = animal.growth;
+                state.breedingCooldown = animal.breedingCooldown();
+                data.animals.add(state);
+            }
+            WorldStorage.save(data);
+            saveMessage = "Zapisano świat " + Long.toUnsignedString(seed);
+            saveMessageTimer = 4.0f;
+            refreshSavedWorlds();
+        } catch (java.io.IOException error) {
+            saveMessage = "Nie udało się zapisać świata: " + error.getMessage();
+            saveMessageTimer = 6.0f;
+            System.err.println(saveMessage);
+        }
+    }
+
     private void drawBlockIcon(Graphics2D g, int x, int y, byte type) {
-        if (World.isFishSpawnEgg(type)) {
-            drawFishEggIcon(g, x, y, type);
-            return;
-        }
-        if (World.isFlower(type)) {
-            drawFlowerIcon(g, x, y, type);
-            return;
-        }
-        if (World.isMushroom(type)) {
-            drawMushroomIcon(g, x, y, type);
-            return;
-        }
-
-        Color material = blockColor(type);
-        Color top = material.brighter();
-        Color front = material;
-        Color side = material.darker();
-        if (type == World.GRASS) {
-            front = new Color(111, 91, 61);
-            side = new Color(83, 68, 49);
-        } else if (type == World.LEAVES || type == World.BIRCH_LEAVES || type == World.PINE_LEAVES
-                || type == World.ACACIA_LEAVES || type == World.CHERRY_LEAVES) {
-            top = material.brighter();
-            side = new Color(Math.max(15, material.getRed() - 27), Math.max(20, material.getGreen() - 27),
-                    Math.max(18, material.getBlue() - 27));
-        }
-
-        Polygon topFace = new Polygon(new int[]{x + 2, x + 10, x + 34, x + 26},
-                new int[]{y + 6, y, y + 6, y + 12}, 4);
-        Polygon frontFace = new Polygon(new int[]{x + 2, x + 26, x + 26, x + 2},
-                new int[]{y + 6, y + 12, y + 32, y + 26}, 4);
-        Polygon sideFace = new Polygon(new int[]{x + 26, x + 34, x + 34, x + 26},
-                new int[]{y + 12, y + 6, y + 26, y + 32}, 4);
-        g.setColor(top); g.fillPolygon(topFace);
-        g.setColor(front); g.fillPolygon(frontFace);
-        g.setColor(side); g.fillPolygon(sideFace);
-
-        if (type == World.GRASS) {
-            g.setColor(new Color(111, 164, 69));
-            g.fillPolygon(new int[]{x + 2, x + 26, x + 26, x + 2},
-                    new int[]{y + 6, y + 12, y + 16, y + 10}, 4);
-            g.setColor(new Color(84, 137, 57));
-            g.fillPolygon(new int[]{x + 26, x + 34, x + 34, x + 26},
-                    new int[]{y + 12, y + 6, y + 10, y + 16}, 4);
-        }
-        drawBlockFaceDetails(g, frontFace, x, y, type, front);
-
-        if (isLog(type)) {
-            Shape oldClip = g.getClip();
-            g.clip(topFace);
-            g.setColor(material.darker());
-            g.drawOval(x + 12, y + 2, 9, 7);
-            g.setColor(material.brighter());
-            g.fillOval(x + 15, y + 4, 3, 2);
-            g.setClip(oldClip);
-        }
-        g.setColor(new Color(17, 24, 25, 190));
-        g.drawPolygon(topFace); g.drawPolygon(frontFace); g.drawPolygon(sideFace);
-    }
-
-    private void drawBlockFaceDetails(Graphics2D g, Polygon face, int x, int y, byte type, Color base) {
-        Shape oldClip = g.getClip();
-        g.clip(face);
-        if (isLog(type)) {
-            g.setStroke(new BasicStroke(1));
-            for (int stripe = 0; stripe < 5; stripe++) {
-                int stripeX = x + 5 + stripe * 4;
-                g.setColor((stripe & 1) == 0 ? base.darker() : base.brighter());
-                g.drawLine(stripeX, y + 10, stripeX, y + 29);
-            }
-        } else {
-            int specks = isLeafBlock(type) ? 12 : isOre(type) ? 7 : 5;
-            for (int i = 0; i < specks; i++) {
-                int px = x + 4 + Math.floorMod(i * 11 + (type & 0xff) * 3, 20);
-                int py = y + 10 + Math.floorMod(i * 7 + (type & 0xff) * 5, 16);
-                if (isOre(type) && i % 2 == 0) g.setColor(base.brighter());
-                else if (isLeafBlock(type)) g.setColor(i % 3 == 0 ? base.darker() : base.brighter());
-                else g.setColor(i % 2 == 0 ? base.darker() : base.brighter());
-                g.fillRect(px, py, isLeafBlock(type) ? 2 : 1, isLeafBlock(type) ? 2 : 1);
-            }
-            if (type == World.PLANKS) {
-                g.setColor(base.darker());
-                for (int line = 0; line < 3; line++) g.drawLine(x + 4, y + 14 + line * 6, x + 24, y + 14 + line * 6);
-            }
-        }
-        g.setClip(oldClip);
-    }
-
-    private void drawFlowerIcon(Graphics2D g, int x, int y, byte type) {
-        Color petals = blockColor(type);
-        g.setColor(new Color(57, 113, 55));
-        g.fillRect(x + 15, y + 13, 3, 18);
-        g.fillRect(x + 9, y + 22, 7, 3);
-        g.fillRect(x + 18, y + 26, 6, 3);
-        g.setColor(petals.darker());
-        g.fillRect(x + 10, y + 4, 8, 7);
-        g.fillRect(x + 17, y + 4, 8, 7);
-        g.fillRect(x + 13, y, 9, 7);
-        g.fillRect(x + 13, y + 9, 9, 6);
-        g.setColor(petals.brighter());
-        g.fillRect(x + 13, y + 4, 10, 7);
-        g.setColor(new Color(246, 211, 72));
-        g.fillRect(x + 17, y + 6, 4, 4);
-    }
-
-    private void drawMushroomIcon(Graphics2D g, int x, int y, byte type) {
-        boolean red = type <= World.RED_MUSHROOM_LARGE;
-        boolean small = type == World.RED_MUSHROOM_SMALL || type == World.BROWN_MUSHROOM_SMALL;
-        boolean large = type == World.RED_MUSHROOM_LARGE || type == World.BROWN_MUSHROOM_LARGE;
-        Color cap = red ? new Color(184, 54, 54) : new Color(139, 91, 55);
-        Color capLight = cap.brighter(), stem = new Color(231, 222, 197);
-        int stemX = large ? x + 13 : x + 15;
-        int stemY = small ? y + 13 : large ? y + 15 : y + 14;
-        int stemWidth = large ? 8 : 5;
-        int stemHeight = small ? 15 : large ? 13 : 14;
-        g.setColor(new Color(177, 164, 139));
-        g.fillRect(stemX + 1, stemY, stemWidth, stemHeight);
-        g.setColor(stem);
-        g.fillRect(stemX, stemY, stemWidth, stemHeight - 1);
-
-        if (small) {
-            g.setColor(cap.darker()); g.fillRect(x + 10, y + 7, 20, 7);
-            g.setColor(cap); g.fillRect(x + 8, y + 5, 24, 8);
-            g.setColor(capLight); g.fillRect(x + 13, y + 3, 14, 4);
-        } else if (large) {
-            g.setColor(cap.darker()); g.fillRect(x + 4, y + 10, 31, 7);
-            g.setColor(cap); g.fillRect(x + 2, y + 7, 34, 10);
-            g.setColor(capLight); g.fillRect(x + 8, y + 4, 24, 6);
-            g.fillRect(x + 14, y + 2, 12, 4);
-        } else {
-            g.setColor(cap.darker()); g.fillRect(x + 7, y + 9, 26, 7);
-            g.setColor(cap); g.fillRect(x + 4, y + 6, 32, 10);
-            g.setColor(capLight); g.fillRect(x + 10, y + 3, 20, 6);
-        }
-        g.setColor(red ? new Color(244, 224, 190) : new Color(208, 174, 127));
-        g.fillRect(x + 11, y + 8, 3, 2);
-        g.fillRect(x + 25, y + 11, 3, 2);
-        if (large) g.fillRect(x + 18, y + 5, 3, 2);
-    }
-
-    private void drawFishEggIcon(Graphics2D g, int x, int y, byte type) {
-        Color shell = type == World.COD_SPAWN_EGG ? new Color(112, 161, 174)
-                : type == World.SALMON_SPAWN_EGG ? new Color(221, 126, 100)
-                : type == World.TROPICAL_FISH_SPAWN_EGG ? new Color(70, 190, 174)
-                : type == World.PIKE_SPAWN_EGG ? new Color(128, 157, 76) : new Color(193, 160, 82);
-        int[] eggX = {x + 17, x + 25, x + 28, x + 25, x + 20, x + 12, x + 8, x + 9};
-        int[] eggY = {y + 2, y + 7, y + 15, y + 22, y + 28, y + 26, y + 18, y + 9};
-        g.setColor(shell.darker());
-        g.fillPolygon(eggX, eggY, eggX.length);
-        g.setColor(shell);
-        g.fillPolygon(new int[]{x + 16, x + 22, x + 24, x + 21, x + 17, x + 11, x + 11, x + 12},
-                new int[]{y + 3, y + 8, y + 15, y + 21, y + 25, y + 23, y + 17, y + 9}, 8);
-        g.setColor(shell.brighter());
-        g.fillRect(x + 14, y + 7, 4, 3);
-        g.fillRect(x + 12, y + 13, 3, 3);
-    }
-
-    private Color blockColor(byte type) {
-        if (type == World.GRASS) return new Color(96, 161, 68);
-        if (type == World.DIRT) return new Color(145, 101, 65);
-        if (type == World.STONE) return new Color(145, 153, 153);
-        if (type == World.SAND) return new Color(223, 203, 145);
-        if (type == World.WOOD) return new Color(142, 93, 50);
-        if (type == World.LEAVES) return new Color(71, 139, 76);
-        if (type == World.COAL_ORE) return new Color(62, 67, 73);
-        if (type == World.COPPER_ORE) return new Color(190, 112, 70);
-        if (type == World.IRON_ORE) return new Color(175, 132, 108);
-        if (type == World.GOLD_ORE) return new Color(226, 186, 65);
-        if (type == World.DIAMOND_ORE) return new Color(81, 211, 225);
-        if (type == World.EMERALD_ORE) return new Color(47, 192, 111);
-        if (type == World.RUBY_ORE) return new Color(208, 57, 79);
-        if (type == World.SAPPHIRE_ORE) return new Color(71, 116, 229);
-        if (type == World.SNOW) return new Color(223, 236, 241);
-        if (type == World.RED_FLOWER) return new Color(215, 65, 83);
-        if (type == World.YELLOW_FLOWER) return new Color(244, 205, 68);
-        if (type == World.BLUE_FLOWER) return new Color(87, 120, 226);
-        if (type == World.BIRCH_WOOD) return new Color(224, 215, 179);
-        if (type == World.BIRCH_LEAVES) return new Color(116, 168, 80);
-        if (type == World.PINE_WOOD) return new Color(96, 69, 44);
-        if (type == World.PINE_LEAVES) return new Color(37, 89, 56);
-        if (type == World.ACACIA_WOOD) return new Color(166, 105, 57);
-        if (type == World.ACACIA_LEAVES) return new Color(126, 142, 62);
-        if (type == World.CHERRY_WOOD) return new Color(129, 77, 73);
-        if (type == World.CHERRY_LEAVES) return new Color(224, 135, 173);
-        if (type == World.PLANKS) return new Color(175, 125, 75);
-        if (type == World.TORCH) return new Color(245, 166, 57);
-        if (type == World.WOOL) return new Color(220, 214, 198);
-        return new Color(32, 154, 93);
-    }
-
-    private static boolean isLog(byte type) {
-        return type == World.WOOD || type == World.BIRCH_WOOD || type == World.PINE_WOOD
-                || type == World.ACACIA_WOOD || type == World.CHERRY_WOOD;
-    }
-
-    private static boolean isLeafBlock(byte type) {
-        return type == World.LEAVES || type == World.BIRCH_LEAVES || type == World.PINE_LEAVES
-                || type == World.ACACIA_LEAVES || type == World.CHERRY_LEAVES;
-    }
-
-    private static boolean isOre(byte type) {
-        return type >= World.COAL_ORE && type <= World.SAPPHIRE_ORE;
+        BufferedImage blockRenderIcon = BlockRenderAssets.image(type);
+        if (blockRenderIcon != null) g.drawImage(blockRenderIcon, x, y - 2, 40, 40, null);
     }
 
     private void drawStartOverlay(Graphics2D g, int cx, int cy) {
@@ -2020,10 +2449,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         g.setColor(new Color(210, 232, 217, 220));
         g.setStroke(new BasicStroke(1.3f)); g.drawRoundRect(x, y, width, height, 26, 26);
         g.setColor(new Color(175, 219, 155));
-        g.setFont(new Font("SansSerif", Font.BOLD, 34));
+        g.setFont(uiFont(Font.BOLD, 34));
         String title = "TYTANCRAFT";
         g.drawString(title, cx - g.getFontMetrics().stringWidth(title) / 2, y + 56);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 16));
+        g.setFont(uiFont(Font.PLAIN, 16));
         g.setColor(new Color(228, 238, 231));
         if (paused) {
             g.drawString("Gra wstrzymana", cx - 57, y + 91);
@@ -2088,6 +2517,11 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             int x = hitX + hitNormalX, y = hitY + hitNormalY, z = hitZ + hitNormalZ;
             if (!World.inBounds(x, y, z)) return;
             byte selectedType = hotbar[selectedBlock];
+            byte placedType = selectedType;
+            if (selectedType == World.LADDER) {
+                if (hitNormalY != 0 || !World.isSolid(world.get(hitX, hitY, hitZ))) return;
+                placedType = World.ladderAgainstWall(hitNormalX, hitNormalZ);
+            }
             int itemIndex = selectedType & 0xff;
             byte targetBlock = world.get(x, y, z);
             boolean replaceable = targetBlock == World.AIR || targetBlock == World.WATER;
@@ -2096,7 +2530,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                     && y + 1 > playerY && y < playerY + 1.8f;
             if (replaceable && !overlapsPlayer
                     && (creativeMode || inventory[itemIndex] > 0)) {
-                world.set(x, y, z, selectedType);
+                world.set(x, y, z, placedType);
                 if (!creativeMode) inventory[itemIndex]--;
                 blockActionCooldown = 0.20f;
             }
@@ -2105,7 +2539,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             world.set(hitX, hitY, hitZ, World.AIR);
             world.flowWaterInto(hitX, hitY, hitZ);
             if (!creativeMode && minedBlock != World.AIR && minedBlock != World.WATER) {
-                int itemIndex = minedBlock & 0xff;
+                int itemIndex = World.isLadderBlock(minedBlock) ? World.LADDER : minedBlock & 0xff;
                 inventory[itemIndex] = Math.min(999, inventory[itemIndex] + 1);
             }
             blockActionCooldown = 0.20f;
@@ -2129,6 +2563,9 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             case World.PIKE_SPAWN_EGG -> Animal.Kind.PIKE;
             default -> Animal.Kind.CARP;
         };
+        int kindPopulation = 0;
+        for (Animal animal : animals) if (animal.alive && animal.kind == kind) kindPopulation++;
+        if (kindPopulation >= MAX_ANIMALS_PER_KIND) return;
         int ground = world.heightAt(waterHitX, waterHitZ);
         float swimHeight = Math.max(ground + 1.1f, World.WATER_LEVEL - 0.9f);
         Animal fish = new Animal(kind, waterHitX + 0.5f, waterHitZ + 0.5f, swimHeight, animalRandom);
@@ -2159,6 +2596,16 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
 
     @Override public void keyPressed(KeyEvent e) {
         int key = e.getKeyCode();
+        if (key == KeyEvent.VK_F11) {
+            toggleFullScreen();
+            return;
+        }
+        if (!inLobby && key == KeyEvent.VK_F5) {
+            saveRequested = true;
+            saveMessage = "Zapisywanie świata…";
+            saveMessageTimer = 4.0f;
+            return;
+        }
         if (inLobby) {
             if (key == KeyEvent.VK_BACK_SPACE && nicknameFocused && !nickname.isEmpty()) {
                 nickname = nickname.substring(0, nickname.length() - 1);
@@ -2187,7 +2634,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         }
         if (key >= KeyEvent.VK_1 && key <= KeyEvent.VK_9) selectedBlock = key - KeyEvent.VK_1;
         if (key == KeyEvent.VK_0) selectedBlock = 9;
-        if (key == KeyEvent.VK_R && !wasPressed) eatFood();
+        if (key == KeyEvent.VK_R && !wasPressed) pendingActions.add(this::eatFood);
         if (key == KeyEvent.VK_ESCAPE) releaseMouse(!paused);
     }
     @Override public void focusLost(FocusEvent e) {
@@ -2206,53 +2653,71 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
     @Override public void mouseClicked(MouseEvent e) {}
     @Override public void mousePressed(MouseEvent e) {
+        int mouseX = toVirtualX(e.getX()), mouseY = toVirtualY(e.getY());
         if (inventoryOpen) {
-            if (e.getButton() == MouseEvent.BUTTON1) handleInventoryClick(e.getX(), e.getY());
+            if (e.getButton() == MouseEvent.BUTTON1) handleInventoryClick(mouseX, mouseY);
             return;
         }
         if (inLobby) {
             if (e.getButton() == MouseEvent.BUTTON1) {
-                int left = WINDOW_WIDTH / 2 - 292;
-                int top = WINDOW_HEIGHT / 2 - 149;
-                int startX = WINDOW_WIDTH / 2 - 165;
-                int startY = WINDOW_HEIGHT / 2 + 215;
-                int rightX = WINDOW_WIDTH / 2 + 13;
-                int cardY = WINDOW_HEIGHT / 2 - 218;
-                int modeY = cardY + 65;
-                if (inside(e.getX(), e.getY(), rightX + 17, modeY, 122, 34)) {
+                int centerX = WINDOW_WIDTH / 2, centerY = WINDOW_HEIGHT / 2;
+                int left = lobbyLeftCardX(centerX) + LOBBY_NICKNAME_X;
+                int top = lobbyCardY(centerY) + LOBBY_NICKNAME_Y;
+                int startX = lobbyStartButtonX(centerX);
+                int startY = lobbyStartButtonY(centerY);
+                int rightX = lobbyRightCardX(centerX);
+                int cardY = lobbyCardY(centerY);
+                int modeY = cardY + LOBBY_MODE_Y;
+                int saveListX = lobbyLeftCardX(centerX);
+                int saveListTop = cardY + LOBBY_SAVED_LIST_Y;
+                int visibleSaves = Math.min(5, Math.max(0, savedWorlds.size() - savedWorldOffset));
+                if (inside(mouseX, mouseY, saveListX + 15, saveListTop,
+                        LOBBY_CARD_WIDTH - 30, visibleSaves * LOBBY_SAVED_ROW_STEP - 3)) {
+                    int row = (mouseY - saveListTop) / LOBBY_SAVED_ROW_STEP;
+                    if (row < visibleSaves) {
+                        WorldStorage.SaveInfo save = savedWorlds.get(savedWorldOffset + row);
+                        saveMessage = "Wczytywanie świata…";
+                        saveMessageTimer = 6.0f;
+                        pendingActions.add(() -> loadSavedWorld(save));
+                    }
+                    return;
+                }
+                if (inside(mouseX, mouseY, rightX + LOBBY_SURVIVAL_X, modeY,
+                        LOBBY_SURVIVAL_WIDTH, LOBBY_MODE_HEIGHT)) {
                     creativeMode = false;
                     nicknameFocused = false;
                     return;
                 }
-                if (inside(e.getX(), e.getY(), rightX + 151, modeY, 128, 34)) {
+                if (inside(mouseX, mouseY, rightX + LOBBY_CREATIVE_X, modeY,
+                        LOBBY_CREATIVE_WIDTH, LOBBY_MODE_HEIGHT)) {
                     creativeMode = true;
                     nicknameFocused = false;
                     aggressionDragging = false;
                     return;
                 }
-                int sliderX = rightX + 20, sliderY = cardY + 211, sliderWidth = 256;
-                if (!creativeMode && inside(e.getX(), e.getY(), sliderX - 8, sliderY - 9, sliderWidth + 16, 24)) {
+                int sliderX = centerX + LOBBY_SLIDER_X;
+                int sliderY = cardY + LOBBY_AGGRESSION_Y, sliderWidth = LOBBY_SLIDER_WIDTH;
+                if (!creativeMode && inside(mouseX, mouseY, sliderX - 8, sliderY - 9, sliderWidth + 16, 24)) {
                     aggressionDragging = true;
-                    setAggressionFromMouse(e.getX());
+                    setAggressionFromMouse(mouseX);
                     return;
                 }
-                int timeSliderY = cardY + 273;
-                if (inside(e.getX(), e.getY(), sliderX - 8, timeSliderY - 9, sliderWidth + 16, 24)) {
+                int timeSliderY = cardY + LOBBY_DAY_SPEED_Y;
+                if (inside(mouseX, mouseY, sliderX - 8, timeSliderY - 9, sliderWidth + 16, 24)) {
                     timeSpeedDragging = true;
-                    setDaySpeedFromMouse(e.getX());
+                    setDaySpeedFromMouse(mouseX);
                     return;
                 }
-                int distanceSliderY = cardY + 341;
-                if (inside(e.getX(), e.getY(), sliderX - 8, distanceSliderY - 9, sliderWidth + 16, 24)) {
+                int distanceSliderY = cardY + LOBBY_RENDER_DISTANCE_Y;
+                if (inside(mouseX, mouseY, sliderX - 8, distanceSliderY - 9, sliderWidth + 16, 24)) {
                     renderDistanceDragging = true;
-                    setRenderDistanceFromMouse(e.getX());
+                    setRenderDistanceFromMouse(mouseX);
                     return;
                 }
-                if (e.getX() >= left && e.getX() <= left + 262
-                        && e.getY() >= top && e.getY() <= top + 51) {
+                if (inside(mouseX, mouseY, left, top, LOBBY_NICKNAME_WIDTH, LOBBY_NICKNAME_HEIGHT)) {
                     nicknameFocused = true;
-                } else if (e.getX() >= startX && e.getX() <= startX + 330
-                        && e.getY() >= startY && e.getY() <= startY + 63) {
+                } else if (inside(mouseX, mouseY, startX, startY,
+                        LOBBY_START_BUTTON_WIDTH, LOBBY_START_BUTTON_HEIGHT)) {
                     enterWorld();
                 } else {
                     nicknameFocused = false;
@@ -2291,31 +2756,71 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     @Override public void mouseDragged(MouseEvent e) {
         if (inventoryOpen) return;
         if (inLobby && aggressionDragging) {
-            setAggressionFromMouse(e.getX());
+            setAggressionFromMouse(toVirtualX(e.getX()));
             return;
         }
         if (inLobby && timeSpeedDragging) {
-            setDaySpeedFromMouse(e.getX());
+            setDaySpeedFromMouse(toVirtualX(e.getX()));
             return;
         }
         if (inLobby && renderDistanceDragging) {
-            setRenderDistanceFromMouse(e.getX());
+            setRenderDistanceFromMouse(toVirtualX(e.getX()));
             return;
         }
         mouseMoved(e);
     }
     @Override public void mouseWheelMoved(MouseWheelEvent e) {
         if (inventoryOpen) return;
+        if (inLobby) {
+            int listX = lobbyLeftCardX(WINDOW_WIDTH / 2);
+            int listY = lobbyCardY(WINDOW_HEIGHT / 2) + 229;
+            if (savedWorlds.size() > 5 && inside(toVirtualX(e.getX()), toVirtualY(e.getY()), listX, listY,
+                    LOBBY_CARD_WIDTH, 5 * LOBBY_SAVED_ROW_STEP + 10)) {
+                savedWorldOffset = Math.max(0, Math.min(savedWorlds.size() - 5,
+                        savedWorldOffset + e.getWheelRotation()));
+            }
+            return;
+        }
         selectedBlock = Math.floorMod(selectedBlock + e.getWheelRotation(), hotbar.length);
     }
 
     private String blockName(byte type) {
-        for (int i = 0; i < BLOCK_TYPES.length; i++) if (BLOCK_TYPES[i] == type) return BLOCK_NAMES[i];
-        return "Blok";
+        return BlockRegistry.info(type).name();
     }
+
+    private int toVirtualX(int x) { return Math.round(x * WINDOW_WIDTH / (float) Math.max(1, getWidth())); }
+
+    private int toVirtualY(int y) { return Math.round(y * WINDOW_HEIGHT / (float) Math.max(1, getHeight())); }
 
     private static boolean inside(int x, int y, int left, int top, int width, int height) {
         return x >= left && x <= left + width && y >= top && y <= top + height;
+    }
+
+    private static Hit[] newHitScratch(int count) {
+        Hit[] hits = new Hit[count];
+        for (int i = 0; i < count; i++) hits[i] = new Hit();
+        return hits;
+    }
+
+    private static AnimalHit[] newAnimalHitScratch(int count) {
+        AnimalHit[] hits = new AnimalHit[count];
+        for (int i = 0; i < count; i++) hits[i] = new AnimalHit();
+        return hits;
+    }
+
+    private static final class RainSplash {
+        final float x, y, z;
+        final boolean onWater;
+        final int randomBits;
+        float age;
+
+        RainSplash(float x, float y, float z, boolean onWater, int randomBits) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.onWater = onWater;
+            this.randomBits = randomBits;
+        }
     }
 
     private static final class Hit {
@@ -2345,13 +2850,13 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     }
 
     private static final class AnimalHit {
-        final Animal animal;
-        final Animal.Kind kind;
-        final int color;
-        final float distance, nx, ny, nz, x, y, z;
+        Animal animal;
+        Animal.Kind kind;
+        int color;
+        float distance, nx, ny, nz, x, y, z;
 
-        AnimalHit(Animal animal, int color, float distance, float nx, float ny, float nz,
-                  float x, float y, float z) {
+        void set(Animal animal, int color, float distance, float nx, float ny, float nz,
+                 float x, float y, float z) {
             this.animal = animal;
             this.kind = animal.kind;
             this.color = color;

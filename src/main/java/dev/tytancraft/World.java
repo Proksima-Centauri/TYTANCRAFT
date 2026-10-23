@@ -1,9 +1,8 @@
 package dev.tytancraft;
 
 import java.util.ArrayDeque;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.Random;
-import java.util.Set;
 
 final class World {
     static final int WIDTH = 192;
@@ -55,10 +54,18 @@ final class World {
     static final byte PIKE_SPAWN_EGG = 40;
     static final byte CARP_SPAWN_EGG = 41;
     static final byte WOOL = 42;
+    static final byte LADDER = 43;
+    static final byte LADDER_Z_NEG = 44;
+    static final byte LADDER_X_POS = 45;
+    static final byte LADDER_X_NEG = 46;
     private final byte[] blocks = new byte[WIDTH * HEIGHT * DEPTH];
     private final short[] waterFlow = new short[WIDTH * HEIGHT * DEPTH];
+    private final short[] waterVisits = new short[WIDTH * HEIGHT * DEPTH];
+    private final byte[] torchLight = new byte[WIDTH * HEIGHT * DEPTH];
     private final int[] heights = new int[WIDTH * DEPTH];
     private final int[] canopyHeights = new int[WIDTH * DEPTH];
+    private final WaterQueue waterQueue = new WaterQueue();
+    private short waterVisitGeneration = 1;
     private final long seed;
 
     World(long seed) {
@@ -73,7 +80,41 @@ final class World {
         growMushrooms();
     }
 
+    World(long seed, byte[] savedBlocks, short[] savedWaterFlow) {
+        this(seed, savedBlocks, savedWaterFlow, new long[0]);
+    }
+
+    World(long seed, byte[] savedBlocks, short[] savedWaterFlow, long[] savedWaterQueue) {
+        if (savedBlocks.length != blocks.length || savedWaterFlow.length != waterFlow.length) {
+            throw new IllegalArgumentException("Nieprawidłowy rozmiar zapisanego świata");
+        }
+        this.seed = seed;
+        System.arraycopy(savedBlocks, 0, blocks, 0, blocks.length);
+        System.arraycopy(savedWaterFlow, 0, waterFlow, 0, waterFlow.length);
+        recalculateAllHeights();
+        recalculateAllCanopyHeights();
+        rebuildTorchLighting();
+        for (long entry : savedWaterQueue) {
+            int cell = (int) entry;
+            int level = (int) (entry >>> 32);
+            if (cell < 0 || cell >= blocks.length || level < 0 || level > MAX_WATER_FLOW
+                    || blocks[cell] != WATER) continue;
+            waterQueue.add(entry);
+        }
+    }
+
     long seed() { return seed; }
+
+    byte[] copyBlocks() { return blocks.clone(); }
+
+    short[] copyWaterFlow() { return waterFlow.clone(); }
+
+    long[] copyPendingWaterFlow() { return waterQueue.toArray(); }
+
+    int torchLightAt(int x, int y, int z) {
+        if (!inBounds(x, y, z)) return 0;
+        return torchLight[index(x, y, z)] & 0xff;
+    }
 
     int[] findDrySpawn() {
         int centerX = WIDTH / 2, centerZ = DEPTH / 2;
@@ -114,63 +155,81 @@ final class World {
         if (!insideWorld(x, z) || y < 0 || y >= HEIGHT) return;
         int blockIndex = index(x, y, z);
         if (blocks[blockIndex] == type) return;
+        byte oldType = blocks[blockIndex];
         blocks[blockIndex] = type;
         if (type != WATER) waterFlow[blockIndex] = 0;
         if (y >= heights[z * WIDTH + x] - 1) recalculateHeight(x, z);
         if (y >= canopyHeights[z * WIDTH + x] - 1) recalculateCanopyHeight(x, z);
+        if (oldType == TORCH && type != TORCH) rebuildTorchLighting();
+        else if (type == TORCH) spreadTorchLightFrom(blockIndex);
     }
 
     void flowWaterInto(int x, int y, int z) {
         if (!insideWorld(x, z) || y < 0 || y >= HEIGHT || get(x, y, z) != AIR) return;
-        ArrayDeque<WaterNode> queue = new ArrayDeque<>();
-        Set<Long> visited = new HashSet<>();
-        addWaterSource(queue, x - 1, y, z);
-        addWaterSource(queue, x + 1, y, z);
-        addWaterSource(queue, x, y - 1, z);
-        addWaterSource(queue, x, y + 1, z);
-        addWaterSource(queue, x, y, z - 1);
-        addWaterSource(queue, x, y, z + 1);
+        if (get(x - 1, y, z) != WATER && get(x + 1, y, z) != WATER
+                && get(x, y - 1, z) != WATER && get(x, y + 1, z) != WATER
+                && get(x, y, z - 1) != WATER && get(x, y, z + 1) != WATER) return;
+        if (++waterVisitGeneration == 0) {
+            Arrays.fill(waterVisits, (short) 0);
+            waterVisitGeneration = 1;
+        }
+        addWaterSource(x - 1, y, z);
+        addWaterSource(x + 1, y, z);
+        addWaterSource(x, y - 1, z);
+        addWaterSource(x, y + 1, z);
+        addWaterSource(x, y, z - 1);
+        addWaterSource(x, y, z + 1);
+    }
 
-        while (!queue.isEmpty()) {
-            WaterNode node = queue.removeFirst();
-            long key = ((((long) node.x) << 32) ^ (node.z & 0xffffffffL)) * HEIGHT + node.y;
-            if (!visited.add(key)) continue;
-            int level = node.level;
-            if (node.y > 1) spreadWater(queue, node.x, node.y - 1, node.z, level);
+    void tickWaterFlow() {
+        for (int processed = 0; processed < 192 && !waterQueue.isEmpty(); processed++) {
+            long entry = waterQueue.remove();
+            int cell = (int) entry;
+            if (waterVisits[cell] == waterVisitGeneration || blocks[cell] != WATER) continue;
+            waterVisits[cell] = waterVisitGeneration;
+            int level = (int) (entry >>> 32);
+            int y = cell / (WIDTH * DEPTH);
+            int remainder = cell - y * WIDTH * DEPTH;
+            int z = remainder / WIDTH;
+            int x = remainder - z * WIDTH;
+            if (y > 1) spreadWater(x, y - 1, z, level);
             if (level >= MAX_WATER_FLOW) continue;
             int nextLevel = level + 1;
-            spreadWater(queue, node.x - 1, node.y, node.z, nextLevel);
-            spreadWater(queue, node.x + 1, node.y, node.z, nextLevel);
-            spreadWater(queue, node.x, node.y, node.z - 1, nextLevel);
-            spreadWater(queue, node.x, node.y, node.z + 1, nextLevel);
+            spreadWater(x - 1, y, z, nextLevel);
+            spreadWater(x + 1, y, z, nextLevel);
+            spreadWater(x, y, z - 1, nextLevel);
+            spreadWater(x, y, z + 1, nextLevel);
         }
     }
 
-    static boolean isFlower(byte type) { return type >= RED_FLOWER && type <= BLUE_FLOWER; }
-    static boolean isMushroom(byte type) { return type >= RED_MUSHROOM_SMALL && type <= BROWN_MUSHROOM_LARGE; }
-    static boolean isFishSpawnEgg(byte type) { return type >= COD_SPAWN_EGG && type <= CARP_SPAWN_EGG; }
+    static boolean isFlower(byte type) { return BlockRegistry.has(type, BlockRegistry.FLOWER); }
+    static boolean isMushroom(byte type) { return BlockRegistry.has(type, BlockRegistry.MUSHROOM); }
+    static boolean isFishSpawnEgg(byte type) { return BlockRegistry.has(type, BlockRegistry.FISH_EGG); }
+    static boolean isLadderBlock(byte type) { return BlockRegistry.has(type, BlockRegistry.CLIMBABLE); }
+
+    static byte ladderAgainstWall(int normalX, int normalZ) {
+        if (normalX > 0) return LADDER_X_NEG;
+        if (normalX < 0) return LADDER_X_POS;
+        if (normalZ > 0) return LADDER_Z_NEG;
+        return LADDER;
+    }
 
     static boolean isTreeBlock(byte type) {
-        return type == WOOD || type == LEAVES || type == BIRCH_WOOD || type == BIRCH_LEAVES
-                || type == PINE_WOOD || type == PINE_LEAVES || type == ACACIA_WOOD || type == ACACIA_LEAVES
-                || type == CHERRY_WOOD || type == CHERRY_LEAVES;
+        return BlockRegistry.has(type, BlockRegistry.TREE);
     }
 
     static boolean isWood(byte type) {
-        return type == WOOD || type == BIRCH_WOOD || type == PINE_WOOD
-                || type == ACACIA_WOOD || type == CHERRY_WOOD;
+        return BlockRegistry.has(type, BlockRegistry.WOOD);
     }
 
     static boolean isSolid(byte type) {
-        return type != AIR && type != WATER && !isFlower(type) && !isMushroom(type);
+        return BlockRegistry.has(type, BlockRegistry.SOLID);
     }
 
     private void generateBaseTerrain() {
-        byte[] nativeHeightMap = TerrainNative.isAvailable()
-                ? TerrainNative.generateHeights(WIDTH, DEPTH, seed) : null;
         for (int z = 0; z < DEPTH; z++) {
             for (int x = 0; x < WIDTH; x++) {
-                int height = nativeHeightMap == null ? terrainHeight(x, z) : nativeHeightMap[z * WIDTH + x] & 0xff;
+                int height = terrainHeight(x, z);
                 heights[z * WIDTH + x] = height;
                 byte surface = surfaceBlock(x, z, height);
                 for (int y = 0; y <= height; y++) {
@@ -254,15 +313,15 @@ final class World {
 
     private void generateOres() {
         Random random = new Random(seed ^ 0x5be0cd19137e2179L);
-        int areaScale = WIDTH * DEPTH / (112 * 112);
-        generateVeins(random, COAL_ORE, 185 * areaScale, 3, 34, 5, 12);
-        generateVeins(random, COPPER_ORE, 125 * areaScale, 5, 28, 4, 9);
-        generateVeins(random, IRON_ORE, 115 * areaScale, 4, 27, 4, 9);
-        generateVeins(random, GOLD_ORE, 54 * areaScale, 3, 17, 3, 7);
-        generateVeins(random, DIAMOND_ORE, 20 * areaScale, 3, 10, 2, 5);
-        generateVeins(random, EMERALD_ORE, 16 * areaScale, 5, 19, 2, 4);
-        generateVeins(random, RUBY_ORE, 19 * areaScale, 3, 13, 2, 5);
-        generateVeins(random, SAPPHIRE_ORE, 19 * areaScale, 3, 15, 2, 5);
+        float areaScale = WIDTH * DEPTH / (112.0f * 112.0f);
+        generateVeins(random, COAL_ORE, Math.round(185 * areaScale), 3, 34, 5, 12);
+        generateVeins(random, COPPER_ORE, Math.round(125 * areaScale), 5, 28, 4, 9);
+        generateVeins(random, IRON_ORE, Math.round(115 * areaScale), 4, 27, 4, 9);
+        generateVeins(random, GOLD_ORE, Math.round(54 * areaScale), 3, 17, 3, 7);
+        generateVeins(random, DIAMOND_ORE, Math.round(20 * areaScale), 3, 10, 2, 5);
+        generateVeins(random, EMERALD_ORE, Math.round(16 * areaScale), 5, 19, 2, 4);
+        generateVeins(random, RUBY_ORE, Math.round(19 * areaScale), 3, 13, 2, 5);
+        generateVeins(random, SAPPHIRE_ORE, Math.round(19 * areaScale), 3, 15, 2, 5);
     }
 
     private void generateVeins(Random random, byte ore, int count, int minY, int maxY, int minSize, int maxSize) {
@@ -289,8 +348,8 @@ final class World {
             int y = heights[z * WIDTH + x];
             byte ground = get(x, y, z);
             if ((ground != GRASS && ground != SNOW) || get(x, y + 1, z) != AIR) continue;
-            float temperature = noise2(x * 0.009, z * 0.009, seed ^ 0x082efa98ec4e6c89L);
-            float humidity = noise2(x * 0.011, z * 0.011, seed ^ 0x452821e638d01377L);
+            float temperature = noise2(x * 0.035, z * 0.035, seed ^ 0x082efa98ec4e6c89L);
+            float humidity = noise2(x * 0.043, z * 0.043, seed ^ 0x452821e638d01377L);
             float density;
             int species;
             if (ground == SNOW) {
@@ -409,23 +468,28 @@ final class World {
 
     private byte surfaceBlock(int x, int z, int height) {
         if (height <= WATER_LEVEL + 1) return SAND;
-        float temperature = noise2(x * 0.009, z * 0.009, seed ^ 0x082efa98ec4e6c89L);
-        float humidity = noise2(x * 0.011, z * 0.011, seed ^ 0x452821e638d01377L);
+        float temperature = noise2(x * 0.035, z * 0.035, seed ^ 0x082efa98ec4e6c89L);
+        float humidity = noise2(x * 0.043, z * 0.043, seed ^ 0x452821e638d01377L);
         if (temperature < 0.24f) return SNOW;
         if (temperature > 0.72f && humidity < 0.25f) return SAND;
         return GRASS;
     }
 
     private int terrainHeight(int x, int z) {
-        double offset = (seed % 10_000_000L) * 0.00031;
-        double xd = x + offset, zd = z - offset * 0.73;
-        double hills = 12.0
-                + Math.sin(xd * 0.11) * 3.8
-                + Math.cos(zd * 0.13) * 3.2
-                + Math.sin((xd + zd) * 0.075) * 2.8
-                + Math.sin((xd - zd) * 0.033) * 4.0;
-        double ridge = Math.max(0, 1.0 - Math.abs(Math.sin(xd * 0.028) * Math.cos(zd * 0.032)) - 0.70) * 18.0;
-        return Math.max(4, Math.min(HEIGHT - 8, (int) Math.round(hills + ridge)));
+        float continents = fbm(x * 0.012, z * 0.012, seed ^ 0x243f6a8885a308d3L);
+        float hills = fbm(x * 0.034, z * 0.034, seed ^ 0x13198a2e03707344L);
+        float detail = noise2(x * 0.105, z * 0.105, seed ^ 0xa4093822299f31d0L);
+        float ridgeNoise = noise2(x * 0.021, z * 0.021, seed ^ 0x082efa98ec4e6c89L);
+        float ridges = 1.0f - Math.abs(ridgeNoise * 2.0f - 1.0f);
+        float height = 17.0f + (continents - 0.5f) * 66.0f + (hills - 0.5f) * 44.0f
+                + (detail - 0.5f) * 16.0f + Math.max(0, ridges - 0.70f) * 34.0f;
+        return Math.max(4, Math.min(HEIGHT - 8, Math.round(height)));
+    }
+
+    private float fbm(double x, double z, long salt) {
+        return (noise2(x, z, salt) * 0.57f
+                + noise2(x * 2.0, z * 2.0, salt ^ 0x9e3779b97f4a7c15L) * 0.29f
+                + noise2(x * 4.0, z * 4.0, salt ^ 0xc2b2ae3d27d4eb4fL) * 0.14f);
     }
 
     private float noise2(double x, double z, long salt) {
@@ -450,12 +514,12 @@ final class World {
     }
 
     private float hashNoise(int x, int z, long salt) {
-        long value = mix64(seed ^ salt ^ (x * 0x9E3779B97F4A7C15L) ^ (z * 0xC2B2AE3D27D4EB4FL));
+        long value = mix64(salt ^ (x * 0x9E3779B97F4A7C15L) ^ (z * 0xC2B2AE3D27D4EB4FL));
         return (value >>> 40) / 16777215.0f;
     }
 
     private float hashNoise3(int x, int y, int z, long salt) {
-        long value = mix64(seed ^ salt ^ (x * 0x9E3779B97F4A7C15L)
+        long value = mix64(salt ^ (x * 0x9E3779B97F4A7C15L)
                 ^ (y * 0xD6E8FEB86659FD93L) ^ (z * 0xC2B2AE3D27D4EB4FL));
         return (value >>> 40) / 16777215.0f;
     }
@@ -479,7 +543,8 @@ final class World {
     private void recalculateHeight(int x, int z) {
         for (int y = HEIGHT - 1; y >= 0; y--) {
             byte type = blocks[index(x, y, z)];
-            if (type != AIR && type != WATER && !isFlower(type) && !isMushroom(type) && !isTreeBlock(type)) {
+            if (type != AIR && type != WATER && !isFlower(type) && !isMushroom(type)
+                    && !isTreeBlock(type) && !isLadderBlock(type)) {
                 heights[z * WIDTH + x] = y;
                 return;
             }
@@ -490,7 +555,7 @@ final class World {
     private void recalculateCanopyHeight(int x, int z) {
         for (int y = HEIGHT - 1; y >= 0; y--) {
             byte type = blocks[index(x, y, z)];
-            if (type != AIR && type != WATER && !isFlower(type) && !isMushroom(type)) {
+            if (type != AIR && type != WATER && !isFlower(type) && !isMushroom(type) && !isLadderBlock(type)) {
                 canopyHeights[z * WIDTH + x] = y;
                 return;
             }
@@ -502,28 +567,104 @@ final class World {
         if (insideWorld(x, z) && y >= 0 && y < HEIGHT) blocks[index(x, y, z)] = type;
     }
 
-    private void addWaterSource(ArrayDeque<WaterNode> queue, int x, int y, int z) {
+    private void addWaterSource(int x, int y, int z) {
         if (get(x, y, z) != WATER) return;
-        int level = waterFlow[index(x, y, z)] & 0xffff;
+        int cell = index(x, y, z);
+        if (waterVisits[cell] == waterVisitGeneration) return;
+        int level = waterFlow[cell] & 0xffff;
         if (level >= MAX_WATER_FLOW) level = 0;
-        queue.addLast(new WaterNode(x, y, z, level));
+        waterQueue.add(packWaterCell(cell, level));
     }
 
-    private void spreadWater(ArrayDeque<WaterNode> queue, int x, int y, int z, int level) {
+    private void spreadWater(int x, int y, int z, int level) {
         if (level > MAX_WATER_FLOW || !insideWorld(x, z) || y < 0 || y >= HEIGHT || get(x, y, z) != AIR) return;
         int cell = index(x, y, z);
         blocks[cell] = WATER;
         waterFlow[cell] = (short) level;
-        queue.addLast(new WaterNode(x, y, z, level));
+        waterQueue.add(packWaterCell(cell, level));
     }
+
+    private void spreadTorchLightFrom(int source) {
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        torchLight[source] = 15;
+        queue.add(source);
+        propagateTorchLight(queue);
+    }
+
+    private void rebuildTorchLighting() {
+        Arrays.fill(torchLight, (byte) 0);
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        for (int cell = 0; cell < blocks.length; cell++) {
+            if (blocks[cell] != TORCH) continue;
+            torchLight[cell] = 15;
+            queue.addLast(cell);
+        }
+        propagateTorchLight(queue);
+    }
+
+    private void propagateTorchLight(ArrayDeque<Integer> queue) {
+        while (!queue.isEmpty()) {
+            int cell = queue.removeFirst();
+            int light = (torchLight[cell] & 0xff) - 2;
+            if (light <= 0) continue;
+            int y = cell / (WIDTH * DEPTH);
+            int remainder = cell - y * WIDTH * DEPTH;
+            int z = remainder / WIDTH;
+            int x = remainder - z * WIDTH;
+            spreadTorchLight(x - 1, y, z, light, queue);
+            spreadTorchLight(x + 1, y, z, light, queue);
+            spreadTorchLight(x, y - 1, z, light, queue);
+            spreadTorchLight(x, y + 1, z, light, queue);
+            spreadTorchLight(x, y, z - 1, light, queue);
+            spreadTorchLight(x, y, z + 1, light, queue);
+        }
+    }
+
+    private void spreadTorchLight(int x, int y, int z, int light, ArrayDeque<Integer> queue) {
+        if (!inBounds(x, y, z)) return;
+        int cell = index(x, y, z);
+        if (light <= (torchLight[cell] & 0xff)) return;
+        torchLight[cell] = (byte) light;
+        if (blocks[cell] == TORCH || !isSolid(blocks[cell])) queue.addLast(cell);
+    }
+
+    private static long packWaterCell(int cell, int level) { return ((long) level << 32) | (cell & 0xffffffffL); }
 
     private int index(int x, int y, int z) { return (y * DEPTH + z) * WIDTH + x; }
     private static boolean insideWorld(int x, int z) { return x >= 0 && z >= 0 && x < WIDTH && z < DEPTH; }
     private static float fade(float value) { return value * value * (3 - 2 * value); }
     private static float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-    private static final class WaterNode {
-        final int x, y, z, level;
-        WaterNode(int x, int y, int z, int level) { this.x = x; this.y = y; this.z = z; this.level = level; }
+    private static final class WaterQueue {
+        private long[] entries = new long[1024];
+        private int first, size;
+
+        boolean isEmpty() { return size == 0; }
+
+        void add(long entry) {
+            if (size == entries.length) grow();
+            entries[(first + size) % entries.length] = entry;
+            size++;
+        }
+
+        long remove() {
+            long entry = entries[first];
+            first = (first + 1) % entries.length;
+            size--;
+            return entry;
+        }
+
+        long[] toArray() {
+            long[] snapshot = new long[size];
+            for (int i = 0; i < size; i++) snapshot[i] = entries[(first + i) % entries.length];
+            return snapshot;
+        }
+
+        private void grow() {
+            long[] larger = new long[entries.length * 2];
+            for (int i = 0; i < size; i++) larger[i] = entries[(first + i) % entries.length];
+            entries = larger;
+            first = 0;
+        }
     }
 }

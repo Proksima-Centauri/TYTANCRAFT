@@ -35,6 +35,7 @@ final class Animal {
         final int color;
         final float gaitOffset;
         final boolean animatedJaw;
+        float gaitSwing;
 
         Part(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, int color) {
             this(minX, minY, minZ, maxX, maxY, maxZ, color, 0, false);
@@ -92,11 +93,22 @@ final class Animal {
         targetZ = z;
         pause = baby ? 1.0f + random.nextFloat() * 2.0f : random.nextFloat() * 2.0f;
         parts = createParts(kind);
+        updatePartAnimation();
+    }
+
+    void updatePartAnimation() {
+        for (Part part : parts) {
+            part.gaitSwing = part.gaitOffset == 0 ? 0 : (float) Math.sin(gait + part.gaitOffset) * 0.10f;
+        }
     }
 
     boolean canBreed() { return alive && breedingCooldown <= 0 && growth >= 1.0f; }
 
     void beginBreedingCooldown(float seconds) { breedingCooldown = seconds; }
+
+    float breedingCooldown() { return breedingCooldown; }
+
+    void setBreedingCooldown(float seconds) { breedingCooldown = Math.max(0, seconds); }
 
     float mouthOpening() {
         if (kind != Kind.CARP) return 0;
@@ -151,6 +163,7 @@ final class Animal {
         growth = Math.min(1.0f, growth + dt / 35.0f);
         if (kind.isFish()) {
             gait += dt * kind.speed * 8.0f;
+            updatePartAnimation();
             updateFish(world, dt, random);
             return;
         }
@@ -177,6 +190,7 @@ final class Animal {
             return;
         }
         gait += dt * kind.speed * 8.0f;
+        updatePartAnimation();
 
         float dx = targetX - x, dz = targetZ - z;
         float distance = (float) Math.sqrt(dx * dx + dz * dz);
