@@ -68,7 +68,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private static final int LOBBY_CREATIVE_X = 151, LOBBY_CREATIVE_WIDTH = 128;
     private static final int LOBBY_SLIDER_X = 33, LOBBY_SLIDER_WIDTH = 256;
     private static final int LOBBY_AGGRESSION_Y = 211, LOBBY_DAY_SPEED_Y = 273, LOBBY_RENDER_DISTANCE_Y = 341;
-    private static final int LOBBY_SAVED_LIST_Y = 229, LOBBY_SAVED_ROW_STEP = 31, LOBBY_SAVED_ROW_HEIGHT = 28;
+    private static final int LOBBY_SERVER_LABEL_Y = 213, LOBBY_SERVER_INPUT_Y = 220, LOBBY_SERVER_INPUT_HEIGHT = 32;
+    private static final int LOBBY_CONNECT_Y = 259, LOBBY_CONNECT_HEIGHT = 34;
+    private static final int LOBBY_SAVED_HEADER_Y = 308, LOBBY_SAVED_LIST_Y = 318, LOBBY_SAVED_ROWS = 2;
+    private static final int LOBBY_SAVED_ROW_STEP = 31, LOBBY_SAVED_ROW_HEIGHT = 28;
     private static final int LOBBY_START_BUTTON_WIDTH = 330, LOBBY_START_BUTTON_HEIGHT = 63;
     private static final int MAX_RAIN_SPLASHES = 64;
     private static final BasicStroke RAIN_SPLASH_STROKE = new BasicStroke(1.2f);
@@ -140,6 +143,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             {0.37f, 0.00f, 0.37f, 0.63f, 0.52f, 0.63f, World.SNOW},
             {0.06f, 0.48f, 0.06f, 0.94f, 0.94f, 0.94f, 0}
     };
+    private static final AvatarPart[] PLAYER_PARTS = {
+            new AvatarPart(-0.18f, 1.46f, -0.14f, 0.18f, 1.84f, 0.14f, 0xe0b48a, 0),
+            new AvatarPart(-0.22f, 0.82f, -0.12f, 0.22f, 1.46f, 0.12f, 0x3c72a8, 0),
+            new AvatarPart(-0.36f, 0.88f, -0.10f, -0.22f, 1.42f, 0.10f, 0xe0b48a, 0.7f),
+            new AvatarPart(0.22f, 0.88f, -0.10f, 0.36f, 1.42f, 0.10f, 0xe0b48a, -0.7f),
+            new AvatarPart(-0.20f, 0.00f, -0.11f, -0.02f, 0.82f, 0.11f, 0x34495e, -0.7f),
+            new AvatarPart(0.02f, 0.00f, -0.11f, 0.20f, 0.82f, 0.11f, 0x34495e, 0.7f)
+    };
     private static final float[][] LADDER_Z_POS_PARTS = createLadderParts(false, true);
     private static final float[][] LADDER_Z_NEG_PARTS = createLadderParts(false, false);
     private static final float[][] LADDER_X_POS_PARTS = createLadderParts(true, true);
@@ -156,6 +167,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private final float[] visibleAnimalCos = new float[MAX_ANIMALS];
     private final float[] visibleAnimalSin = new float[MAX_ANIMALS];
     private final int[] animalPopulationScratch = new int[Animal.Kind.values().length];
+    private final RemotePlayer[] visiblePlayers = new RemotePlayer[Protocol.MAX_PLAYERS - 1];
+    private final float[] visiblePlayerCos = new float[Protocol.MAX_PLAYERS - 1];
+    private final float[] visiblePlayerSin = new float[Protocol.MAX_PLAYERS - 1];
+    private final PlayerHit[] playerHitScratch = newPlayerHitScratch(VIEW_HEIGHT);
     private Random animalRandom;
     private Random weatherRandom;
     private final Hit[] traceScratch = newHitScratch(VIEW_HEIGHT);
@@ -194,6 +209,13 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private volatile List<WorldStorage.SaveInfo> savedWorlds = List.of();
     private int savedWorldOffset;
     private boolean loadedSave;
+    private volatile String serverAddress = "127.0.0.1:25570";
+    private volatile boolean serverAddressFocused, joiningServer, networkMode;
+    private volatile NetworkClient networkClient;
+    private volatile int networkPlayerId = -1;
+    private final ArrayList<RemotePlayer> remotePlayers = new ArrayList<>(Protocol.MAX_PLAYERS - 1);
+    private ArrayList<RemoteAnimalTarget> remoteAnimalTargets = new ArrayList<>();
+    private float networkPositionTimer;
     private int inventoryTab;
     private int customizeSlot;
     private int selectedRecipe;
@@ -369,6 +391,9 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
 
     private void stopGame() {
         running = false;
+        NetworkClient client = networkClient;
+        networkClient = null;
+        if (client != null) client.close();
         if (gameThread != null && gameThread != Thread.currentThread()) {
             try {
                 gameThread.join(5000);
@@ -377,7 +402,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             }
         }
         releaseFullScreen();
-        if (!inLobby) saveWorldNow();
+        if (!inLobby && !networkMode) saveWorldNow();
     }
 
     private void initializeViewRays() {
@@ -429,16 +454,21 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         while ((action = pendingActions.poll()) != null) action.run();
         if (saveRequested) {
             saveRequested = false;
-            saveWorldNow();
+            if (!networkMode) saveWorldNow();
         }
         if (saveMessageTimer > 0) saveMessageTimer = Math.max(0, saveMessageTimer - dt);
         if (inLobby || inventoryOpen || paused || !captured) return;
-        for (Animal animal : animals) {
-            if (animal.alive) animal.update(world, dt, animalRandom, aggressionLevel, playerX, playerZ, !creativeMode);
+        if (networkMode) {
+            updateRemotePlayers(dt);
+            advanceNetworkEnvironment(dt);
+        } else {
+            for (Animal animal : animals) {
+                if (animal.alive) animal.update(world, dt, animalRandom, aggressionLevel, playerX, playerZ, !creativeMode);
+            }
+            breedAnimals();
+            world.tickWaterFlow();
+            advanceEnvironment(dt);
         }
-        breedAnimals();
-        world.tickWaterFlow();
-        advanceEnvironment(dt);
         updateRainSplashes(dt);
         attackCooldown = Math.max(0, attackCooldown - dt);
         blockActionCooldown = Math.max(0, blockActionCooldown - dt);
@@ -446,6 +476,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             updateCreative(dt);
             if (leftPressed) mineOrPlace(false);
             if (rightPressed) mineOrPlace(true);
+            sendNetworkPosition(dt);
             return;
         }
         damageCooldown = Math.max(0, damageCooldown - dt);
@@ -499,9 +530,25 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             playerY = Math.max(1.0f, newY);
         }
         updateSurvivalVitals(dt);
-        updateAnimalDamage();
+        if (!networkMode) updateAnimalDamage();
         if (leftPressed) mineOrPlace(false);
         if (rightPressed) mineOrPlace(true);
+        sendNetworkPosition(dt);
+    }
+
+    private void sendNetworkPosition(float dt) {
+        if (!networkMode || networkClient == null) return;
+        networkPositionTimer += dt;
+        if (networkPositionTimer < 0.05f) return;
+        networkPositionTimer %= 0.05f;
+        try {
+            networkClient.send(Protocol.Type.PLAYER_POSITION, Protocol.payload(output -> {
+                output.writeFloat(playerX); output.writeFloat(playerY); output.writeFloat(playerZ);
+                output.writeFloat(yaw); output.writeFloat(pitch);
+            }));
+        } catch (java.io.IOException failure) {
+            networkConnectionLost(failure.getMessage());
+        }
     }
 
     private void advanceEnvironment(float dt) {
@@ -882,6 +929,12 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 if (Math.abs(x - animal.x) < radius && Math.abs(z - animal.z) < radius
                         && feetY < animal.y + animal.collisionHeight() && feetY + 1.8f > animal.y) return false;
             }
+            if (networkMode) {
+                for (RemotePlayer player : remotePlayers) {
+                    if (Math.abs(x - player.x) < 0.46f && Math.abs(z - player.z) < 0.46f
+                            && feetY < player.y + 1.8f && feetY + 1.8f > player.y) return false;
+                }
+            }
         }
         return true;
     }
@@ -934,6 +987,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         float rx = cosYaw, rz = -sinYaw;
         float ux = -sinYaw * sinPitch, uy = cosPitch, uz = -cosYaw * sinPitch;
         int visibleAnimalCount = findVisibleAnimals(eyeX, eyeY, eyeZ, fx, fy, fz);
+        int visiblePlayerCount = findVisiblePlayers(eyeX, eyeY, eyeZ, fx, fy, fz);
         hasHit = false;
         aimedAnimal = null;
         aimedAnimalEntity = null;
@@ -948,6 +1002,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             Hit rowTraceScratch = traceScratch[py];
             Hit rowUnderwaterScratch = underwaterTraceScratch[py];
             AnimalHit rowAnimalScratch = animalHitScratch[py];
+            PlayerHit rowPlayerScratch = playerHitScratch[py];
             for (int px = 0; px < VIEW_WIDTH; px++, index++) {
                 float sx = columnX[px];
                 float dx = fx + rx * sx + ux * sy;
@@ -958,11 +1013,18 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 Hit hit = trace(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance, false, rowTraceScratch);
                 AnimalHit animalHit = traceAnimals(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance,
                         visibleAnimalCount, rowAnimalScratch);
+                PlayerHit playerHit = tracePlayers(eyeX, eyeY, eyeZ, dx, dy, dz, maxDistance,
+                        visiblePlayerCount, rowPlayerScratch);
                 if (hit.type == World.WATER) {
                     if (index == centerIndex) {
                         hasWaterHit = true;
                         waterHitX = hit.x; waterHitY = hit.y; waterHitZ = hit.z;
                         waterHitDistance = hit.distance;
+                    }
+                    if (playerHit != null && playerHit.distance < hit.distance
+                            && (animalHit == null || playerHit.distance < animalHit.distance)) {
+                        pixels[index] = shadePlayer(playerHit);
+                        continue;
                     }
                     if (animalHit != null && !animalHit.kind.isFish() && animalHit.distance < hit.distance) {
                         pixels[index] = shadeAnimal(animalHit);
@@ -997,6 +1059,11 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                         }
                     }
                     pixels[index] = filterWater(background, hit, waterDepth);
+                    continue;
+                }
+                if (playerHit != null && playerHit.distance < hit.distance
+                        && (animalHit == null || playerHit.distance < animalHit.distance)) {
+                    pixels[index] = shadePlayer(playerHit);
                     continue;
                 }
                 if (animalHit != null && animalHit.distance < hit.distance) {
@@ -1215,6 +1282,71 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         return found ? result : null;
     }
 
+    private int findVisiblePlayers(float ox, float oy, float oz, float fx, float fy, float fz) {
+        int count = 0;
+        float maxDistance = renderDistance * RENDER_DISTANCE_UNIT + 2.2f;
+        for (RemotePlayer player : remotePlayers) {
+            float toX = player.x - ox, toY = player.y + 0.95f - oy, toZ = player.z - oz;
+            float distanceSquared = toX * toX + toY * toY + toZ * toZ;
+            if (distanceSquared > maxDistance * maxDistance) continue;
+            float forwardDistance = toX * fx + toY * fy + toZ * fz;
+            if (forwardDistance + 2.2f < 0
+                    || (forwardDistance > 0 && forwardDistance * forwardDistance < distanceSquared * 0.04f)) continue;
+            if (count >= visiblePlayers.length) break;
+            visiblePlayers[count] = player;
+            visiblePlayerCos[count] = (float) Math.cos(player.yaw);
+            visiblePlayerSin[count] = (float) Math.sin(player.yaw);
+            count++;
+        }
+        return count;
+    }
+
+    private PlayerHit tracePlayers(float ox, float oy, float oz, float dx, float dy, float dz,
+                                   float maxDistance, int visiblePlayerCount, PlayerHit result) {
+        boolean found = false;
+        float closestDistance = maxDistance;
+        for (int playerIndex = 0; playerIndex < visiblePlayerCount; playerIndex++) {
+            RemotePlayer player = visiblePlayers[playerIndex];
+            float toX = player.x - ox, toY = player.y + 0.95f - oy, toZ = player.z - oz;
+            float along = toX * dx + toY * dy + toZ * dz;
+            float perpendicularSquared = toX * toX + toY * toY + toZ * toZ - along * along;
+            if (perpendicularSquared > 5.3f || along + 2.2f < 0 || along - 2.2f > closestDistance) continue;
+
+            float cos = visiblePlayerCos[playerIndex], sin = visiblePlayerSin[playerIndex];
+            float localOx = -cos * toX + sin * toZ;
+            float localOz = -sin * toX - cos * toZ;
+            float localDx = cos * dx - sin * dz;
+            float localDz = sin * dx + cos * dz;
+            float localOy = oy - player.y;
+            for (AvatarPart part : PLAYER_PARTS) {
+                float swing = part.gaitOffset == 0 ? 0 : (float) Math.sin(player.gait + part.gaitOffset) * 0.08f;
+                float minZ = part.minZ + swing, maxZ = part.maxZ + swing;
+                float distance = intersectBox(localOx, localOy, localOz, localDx, dy, localDz,
+                        part.minX, part.minY, minZ, part.maxX, part.maxY, maxZ, closestDistance);
+                if (distance >= closestDistance) continue;
+                float px = localOx + localDx * distance;
+                float py = localOy + dy * distance;
+                float pz = localOz + localDz * distance;
+                float nx = 0, ny = 0, nz = 0;
+                float face = Math.abs(px - part.minX), candidate = Math.abs(px - part.maxX);
+                if (candidate < face) { face = candidate; nx = 1; } else nx = -1;
+                candidate = Math.abs(py - part.minY);
+                if (candidate < face) { face = candidate; nx = 0; ny = -1; }
+                candidate = Math.abs(py - part.maxY);
+                if (candidate < face) { face = candidate; nx = 0; ny = 1; }
+                candidate = Math.abs(pz - minZ);
+                if (candidate < face) { face = candidate; nx = 0; ny = 0; nz = -1; }
+                candidate = Math.abs(pz - maxZ);
+                if (candidate < face) { nx = 0; ny = 0; nz = 1; }
+                closestDistance = distance;
+                result.set(player, part.color, distance, cos * nx + sin * nz, ny,
+                        -sin * nx + cos * nz);
+                found = true;
+            }
+        }
+        return found ? result : null;
+    }
+
     private static float intersectBox(float ox, float oy, float oz, float dx, float dy, float dz,
                                       float minX, float minY, float minZ, float maxX, float maxY, float maxZ,
                                       float maxDistance) {
@@ -1245,6 +1377,15 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         float lighting = 0.16f + sunlight * 0.35f + diffuse * (0.35f * sunlight);
         int red = (hit.color >> 16) & 255, green = (hit.color >> 8) & 255, blue = hit.color & 255;
         float fog = Math.max(0, Math.min(0.89f, (hit.distance - renderDistance * 4.0f) / (renderDistance * 16.0f)));
+        return rgb(mix(red * lighting, 190, fog), mix(green * lighting, 219, fog), mix(blue * lighting, 221, fog));
+    }
+
+    private int shadePlayer(PlayerHit hit) {
+        float diffuse = Math.max(0, hit.nx * sunX + hit.ny * sunY + hit.nz * sunZ);
+        float lighting = 0.18f + sunlight * 0.36f + diffuse * (0.36f * sunlight);
+        int red = (hit.color >> 16) & 255, green = (hit.color >> 8) & 255, blue = hit.color & 255;
+        float fog = Math.max(0, Math.min(0.89f,
+                (hit.distance - renderDistance * 4.0f) / (renderDistance * 16.0f)));
         return rgb(mix(red * lighting, 190, fog), mix(green * lighting, 219, fog), mix(blue * lighting, 221, fog));
     }
 
@@ -1558,6 +1699,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             g.drawString("PŁYWANIE   SPACJA — góra   CTRL — dół   W+SPACJA — wyjdź", 26, WINDOW_HEIGHT - 57);
         }
         g.drawString(String.format("X %d   Y %d   Z %d", (int) playerX, (int) playerY, (int) playerZ), 26, WINDOW_HEIGHT - 32);
+        drawRemotePlayerNames(g);
         if (!captured || paused) drawStartOverlay(g, cx, cy);
         drawSaveMessage(g);
     }
@@ -1985,6 +2127,43 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         return cloudOpacity(dy * inverseLength, dx * inverseLength, dz * inverseLength);
     }
 
+    private void drawRemotePlayerNames(Graphics2D g) {
+        if (!networkMode || remotePlayers.isEmpty()) return;
+        float eyeX = playerX, eyeY = playerY + 1.62f, eyeZ = playerZ;
+        float cosYaw = (float) Math.cos(yaw), sinYaw = (float) Math.sin(yaw);
+        float cosPitch = (float) Math.cos(pitch), sinPitch = (float) Math.sin(pitch);
+        float fx = sinYaw * cosPitch, fy = sinPitch, fz = cosYaw * cosPitch;
+        float rx = cosYaw, rz = -sinYaw;
+        float ux = -sinYaw * sinPitch, uy = cosPitch, uz = -cosYaw * sinPitch;
+        float focalLength = (VIEW_HEIGHT * 0.5f) / (float) Math.tan(FOV * 0.5f);
+        float maxDistance = renderDistance * RENDER_DISTANCE_UNIT;
+        for (RemotePlayer player : remotePlayers) {
+            float dx = player.x - eyeX, dy = player.y + 1.95f - eyeY, dz = player.z - eyeZ;
+            float distance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+            float depth = dx * fx + dy * fy + dz * fz;
+            if (distance > maxDistance || depth <= 0.1f) continue;
+            float pixelX = VIEW_WIDTH * 0.5f + (dx * rx + dz * rz) / depth * focalLength;
+            float pixelY = VIEW_HEIGHT * 0.5f - (dx * ux + dy * uy + dz * uz) / depth * focalLength;
+            if (pixelX < 0 || pixelY < 0 || pixelX >= VIEW_WIDTH || pixelY >= VIEW_HEIGHT) continue;
+            float rayLength = Math.max(0, distance - 0.35f);
+            if (rayLength > 0) {
+                float inverseLength = 1.0f / distance;
+                Hit obstruction = trace(eyeX, eyeY, eyeZ, dx * inverseLength, dy * inverseLength, dz * inverseLength,
+                        rayLength, false, traceScratch[0]);
+                if (obstruction.type != World.AIR) continue;
+            }
+            int screenX = Math.round(pixelX * WINDOW_WIDTH / VIEW_WIDTH);
+            int screenY = Math.round(pixelY * WINDOW_HEIGHT / VIEW_HEIGHT);
+            g.setFont(uiFont(Font.BOLD, 11));
+            int textWidth = g.getFontMetrics().stringWidth(player.nickname);
+            int left = screenX - textWidth / 2 - 5, top = screenY - 17;
+            g.setColor(cachedColor(20, 20, 20, 150));
+            g.fillRect(left, top, textWidth + 10, 16);
+            g.setColor(Color.WHITE);
+            g.drawString(player.nickname, screenX - textWidth / 2, screenY - 5);
+        }
+    }
+
     private void drawRainSplashes(Graphics2D g) {
         if (rainSplashes.isEmpty()) return;
         float eyeX = playerX, eyeY = playerY + 1.62f, eyeZ = playerZ;
@@ -2135,12 +2314,34 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
 
         g.setFont(uiFont(Font.BOLD, 10));
         g.setColor(cachedColor(57, 57, 57));
-        g.drawString("ZAPISANE ŚWIATY · F5 W GRZE", leftX + 18, cardY + 218);
-        int visibleSaves = Math.min(5, Math.max(0, savedWorlds.size() - savedWorldOffset));
+        g.drawString("ADRES SERWERA", leftX + 18, cardY + LOBBY_SERVER_LABEL_Y);
+        int addressX = leftX + 15, addressY = cardY + LOBBY_SERVER_INPUT_Y;
+        drawClassicPanel(g, addressX, addressY, LOBBY_CARD_WIDTH - 30, LOBBY_SERVER_INPUT_HEIGHT,
+                serverAddressFocused ? 232 : 211);
+        g.setFont(MONOSPACED_PLAIN_12);
+        g.setColor(cachedColor(38, 38, 38));
+        String addressLabel = serverAddress.isEmpty() && serverAddressFocused ? "" : serverAddress;
+        g.drawString(addressLabel, addressX + 9, addressY + 21);
+        if (serverAddressFocused && (frames / 30) % 2 == 0) {
+            int caretX = addressX + 9 + g.getFontMetrics().stringWidth(addressLabel);
+            g.drawLine(caretX, addressY + 7, caretX, addressY + 25);
+        }
+        int connectY = cardY + LOBBY_CONNECT_Y;
+        drawClassicButton(g, leftX + 15, connectY, LOBBY_CARD_WIDTH - 30, LOBBY_CONNECT_HEIGHT, joiningServer);
+        g.setFont(uiFont(Font.BOLD, 10));
+        g.setColor(cachedColor(40, 40, 40));
+        String connectLabel = joiningServer ? "ŁĄCZENIE Z SERWEREM…" : "DOŁĄCZ DO SERWERA";
+        g.drawString(connectLabel, leftX + (LOBBY_CARD_WIDTH - g.getFontMetrics().stringWidth(connectLabel)) / 2,
+                connectY + 22);
+
+        g.setFont(uiFont(Font.BOLD, 10));
+        g.setColor(cachedColor(57, 57, 57));
+        g.drawString("ZAPISANE ŚWIATY", leftX + 18, cardY + LOBBY_SAVED_HEADER_Y);
+        int visibleSaves = Math.min(LOBBY_SAVED_ROWS, Math.max(0, savedWorlds.size() - savedWorldOffset));
         if (visibleSaves == 0) {
-            g.setFont(uiFont(Font.PLAIN, 12));
+            g.setFont(uiFont(Font.PLAIN, 10));
             g.setColor(cachedColor(83, 83, 83));
-            g.drawString("Nowy świat zapisze się po zamknięciu gry", leftX + 18, cardY + 246);
+            g.drawString("Brak zapisów", leftX + 18, cardY + 338);
         }
         for (int row = 0; row < visibleSaves; row++) {
             WorldStorage.SaveInfo save = savedWorlds.get(savedWorldOffset + row);
@@ -2156,7 +2357,7 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             String hint = selected ? "WCZYTANO" : "KLIKNIJ, ABY WCZYTAĆ";
             g.drawString(hint, leftX + cardWidth - 25 - g.getFontMetrics().stringWidth(hint), buttonY + 18);
         }
-        if (savedWorlds.size() > 5) {
+        if (savedWorlds.size() > LOBBY_SAVED_ROWS) {
             g.setFont(uiFont(Font.PLAIN, 9));
             g.setColor(cachedColor(83, 83, 83));
             g.drawString("Kółko myszy: starsze / nowsze zapisy", leftX + 18, cardY + 388);
@@ -2296,26 +2497,347 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
 
     private void enterWorld() {
         if (nickname.isEmpty()) nickname = "Gracz";
-        if (!loadedSave) {
-            Arrays.fill(inventory, 0);
-            if (!creativeMode) {
-                inventory[World.GRASS] = 32;
-                inventory[World.DIRT] = 32;
-                inventory[World.STONE] = 24;
-                inventory[World.SAND] = 16;
-                inventory[World.WOOD] = 16;
-                inventory[World.LEAVES] = 16;
-                inventory[World.COD_SPAWN_EGG] = 2;
-                inventory[World.SALMON_SPAWN_EGG] = 2;
-                inventory[World.TROPICAL_FISH_SPAWN_EGG] = 2;
-                inventory[World.PIKE_SPAWN_EGG] = 2;
-                inventory[World.CARP_SPAWN_EGG] = 2;
-            }
-        }
+        if (!loadedSave) initializeStartingInventory();
         nicknameFocused = false;
+        serverAddressFocused = false;
         inLobby = false;
         paused = false;
         captureMouse();
+    }
+
+    private void beginNetworkJoin() {
+        if (joiningServer || networkMode) return;
+        String requestedAddress = serverAddress.trim();
+        String host;
+        int port = GameServer.DEFAULT_PORT;
+        try {
+            if (requestedAddress.startsWith("[")) {
+                int closing = requestedAddress.indexOf(']');
+                if (closing < 0) throw new IllegalArgumentException("Nieprawidłowy adres IPv6.");
+                host = requestedAddress.substring(1, closing);
+                if (closing + 1 < requestedAddress.length()) {
+                    if (requestedAddress.charAt(closing + 1) != ':') throw new IllegalArgumentException("Nieprawidłowy port.");
+                    port = Integer.parseInt(requestedAddress.substring(closing + 2));
+                }
+            } else {
+                int colon = requestedAddress.lastIndexOf(':');
+                if (colon > 0 && requestedAddress.indexOf(':') == colon) {
+                    host = requestedAddress.substring(0, colon);
+                    port = Integer.parseInt(requestedAddress.substring(colon + 1));
+                } else host = requestedAddress;
+            }
+            if (host.isBlank() || port < 1 || port > 65535) throw new IllegalArgumentException("Nieprawidłowy host lub port.");
+        } catch (IllegalArgumentException invalidAddress) {
+            saveMessage = "Nie udało się połączyć: nieprawidłowy adres serwera.";
+            saveMessageTimer = 5.0f;
+            return;
+        }
+
+        String requestedNickname = nickname.isBlank() ? "Gracz" : nickname;
+        String serverHost = host;
+        int serverPort = port;
+        joiningServer = true;
+        serverAddressFocused = false;
+        saveMessage = "Łączenie z serwerem…";
+        saveMessageTimer = 10.0f;
+        Thread connector = new Thread(() -> {
+            NetworkClient client = null;
+            try {
+                client = new NetworkClient(serverHost, serverPort, new NetworkClient.Listener() {
+                    @Override public void onFrame(Protocol.Frame frame) {
+                        if (frame.type() == Protocol.Type.WELCOME) {
+                            try {
+                                NetworkWelcome welcome = decodeNetworkWelcome(frame.payload());
+                                pendingActions.add(() -> applyNetworkWelcome(welcome));
+                            } catch (java.io.IOException | RuntimeException invalid) {
+                                pendingActions.add(() -> networkConnectionLost("nieprawidłowe dane świata"));
+                            }
+                        } else pendingActions.add(() -> handleNetworkFrame(frame));
+                    }
+
+                    @Override public void onFailure(String message) {
+                        pendingActions.add(() -> networkConnectionLost(message));
+                    }
+                });
+                networkClient = client;
+                client.start(requestedNickname);
+            } catch (java.io.IOException | RuntimeException failure) {
+                if (client != null) client.close();
+                String message = failure.getMessage();
+                pendingActions.add(() -> networkConnectionLost(message));
+            }
+        }, "tytancraft-connect");
+        connector.setDaemon(true);
+        connector.start();
+    }
+
+    private NetworkWelcome decodeNetworkWelcome(byte[] payload) throws java.io.IOException {
+        try (java.io.DataInputStream input = Protocol.input(payload)) {
+            if (input.readInt() != Protocol.VERSION) throw new java.io.IOException("Niezgodna wersja protokołu.");
+            int playerId = input.readInt();
+            String assignedNickname = Protocol.readNickname(input);
+            long serverSeed = input.readLong();
+            boolean serverCreative = input.readBoolean();
+            int serverAggression = input.readInt();
+            float serverDaySpeed = input.readFloat();
+            int serverSpawnX = input.readInt(), serverSpawnZ = input.readInt();
+            float startX = input.readFloat(), startY = input.readFloat(), startZ = input.readFloat();
+            int worldLength = input.readInt();
+            if (worldLength <= 0 || worldLength > Protocol.MAX_WORLD_BYTES) throw new java.io.IOException("Nieprawidłowy rozmiar świata.");
+            byte[] compressedWorld = new byte[worldLength];
+            input.readFully(compressedWorld);
+            WorldStateCodec.Snapshot snapshot = WorldStateCodec.decode(compressedWorld);
+            if (snapshot.seed() != serverSeed) throw new java.io.IOException("Seed świata jest niezgodny.");
+            World serverWorld = WorldStateCodec.createWorld(snapshot);
+            float serverDayTime = input.readFloat(), serverSpeed = input.readFloat();
+            int serverWeather = input.readUnsignedByte();
+            float serverCloudCoverage = input.readFloat(), serverRain = input.readFloat(), serverRainPhase = input.readFloat();
+            float serverCloudX = input.readFloat(), serverCloudY = input.readFloat();
+            if (serverWeather >= Weather.values().length || serverAggression < 0 || serverAggression > 100
+                    || !finite(serverDaySpeed, serverSpeed, startX, startY, startZ, serverDayTime,
+                    serverCloudCoverage, serverRain, serverRainPhase, serverCloudX, serverCloudY)) {
+                throw new java.io.IOException("Nieprawidłowe ustawienia serwera.");
+            }
+            int playerCount = input.readInt();
+            if (playerCount < 0 || playerCount >= Protocol.MAX_PLAYERS) throw new java.io.IOException("Nieprawidłowa liczba graczy.");
+            ArrayList<RemotePlayerState> players = new ArrayList<>(playerCount);
+            for (int i = 0; i < playerCount; i++) players.add(readRemotePlayer(input));
+            ArrayList<RemoteAnimalState> serverAnimals = readRemoteAnimals(input);
+            Protocol.requireConsumed(input);
+            return new NetworkWelcome(playerId, assignedNickname, serverSeed, serverCreative, serverAggression,
+                    serverDaySpeed, serverSpawnX, serverSpawnZ, startX, startY, startZ, serverWorld,
+                    serverDayTime, serverWeather, serverCloudCoverage, serverRain, serverRainPhase,
+                    serverCloudX, serverCloudY, players, serverAnimals);
+        }
+    }
+
+    private void applyNetworkWelcome(NetworkWelcome welcome) {
+        if (!joiningServer) return;
+        networkPlayerId = welcome.playerId;
+        networkMode = true;
+        joiningServer = false;
+        loadedSave = false;
+        seed = welcome.seed;
+        world = welcome.world;
+        spawnX = welcome.spawnX; spawnZ = welcome.spawnZ;
+        creativeMode = welcome.creativeMode;
+        aggressionLevel = welcome.aggressionLevel;
+        daySpeed = welcome.daySpeed;
+        playerX = welcome.playerX; playerY = welcome.playerY; playerZ = welcome.playerZ;
+        yaw = 0; pitch = 0; verticalVelocity = 0;
+        nickname = welcome.nickname;
+        playerHealth = 100; hunger = 100; oxygen = 100; meatCount = 0;
+        damageCooldown = attackCooldown = blockActionCooldown = 0;
+        initializeStartingInventory();
+        animalRandom = new Random(seed ^ 0x6a09e667f3bcc909L);
+        weatherRandom = new Random(seed ^ 0xbb67ae8584caa73bL);
+        dayTime = welcome.dayTime;
+        weather = Weather.values()[welcome.weather];
+        cloudCoverage = targetCloudCoverage = welcome.cloudCoverage;
+        rainIntensity = targetRainIntensity = welcome.rainIntensity;
+        rainPhase = welcome.rainPhase;
+        cloudOffsetX = welcome.cloudOffsetX; cloudOffsetY = welcome.cloudOffsetY;
+        remotePlayers.clear();
+        for (RemotePlayerState remote : welcome.players) if (remote.id != networkPlayerId) applyRemotePlayer(remote);
+        applyRemoteAnimals(welcome.animals);
+        updateSunPosition();
+        networkPositionTimer = 0;
+        inventoryOpen = false;
+        nicknameFocused = serverAddressFocused = false;
+        inLobby = false;
+        paused = false;
+        captureMouse();
+        saveMessage = "Połączono z serwerem: " + welcome.nickname;
+        saveMessageTimer = 4.0f;
+    }
+
+    private RemotePlayerState readRemotePlayer(java.io.DataInputStream input) throws java.io.IOException {
+        int id = input.readInt();
+        String name = Protocol.readNickname(input);
+        float x = input.readFloat(), y = input.readFloat(), z = input.readFloat();
+        float remoteYaw = input.readFloat(), remotePitch = input.readFloat();
+        if (!finite(x, y, z, remoteYaw, remotePitch) || x < 0 || x >= World.WIDTH
+                || z < 0 || z >= World.DEPTH || y < 0 || y > World.HEIGHT) {
+            throw new java.io.IOException("Nieprawidłowa pozycja gracza.");
+        }
+        return new RemotePlayerState(id, name, x, y, z, remoteYaw, remotePitch);
+    }
+
+    private ArrayList<RemoteAnimalState> readRemoteAnimals(java.io.DataInputStream input) throws java.io.IOException {
+        int count = input.readInt();
+        if (count < 0 || count > MAX_ANIMALS) throw new java.io.IOException("Nieprawidłowa liczba zwierząt.");
+        ArrayList<RemoteAnimalState> states = new ArrayList<>(count);
+        Animal.Kind[] kinds = Animal.Kind.values();
+        for (int i = 0; i < count; i++) {
+            int id = input.readInt(), kind = input.readUnsignedByte();
+            boolean alive = input.readBoolean();
+            int health = input.readInt();
+            float x = input.readFloat(), y = input.readFloat(), z = input.readFloat();
+            float animalYaw = input.readFloat(), gait = input.readFloat(), growth = input.readFloat();
+            if (kind >= kinds.length || !finite(x, y, z, animalYaw, gait, growth)
+                    || x < 0 || x >= World.WIDTH || z < 0 || z >= World.DEPTH
+                    || y < 0 || y >= World.HEIGHT || growth < 0.1f || growth > 1.0f) {
+                throw new java.io.IOException("Nieprawidłowy stan zwierzęcia.");
+            }
+            states.add(new RemoteAnimalState(id, kinds[kind], alive, health, x, y, z, animalYaw, gait, growth));
+        }
+        return states;
+    }
+
+    private void applyRemotePlayer(RemotePlayerState state) {
+        if (state.id == networkPlayerId) return;
+        RemotePlayer player = null;
+        for (RemotePlayer candidate : remotePlayers) if (candidate.id == state.id) { player = candidate; break; }
+        if (player == null) remotePlayers.add(new RemotePlayer(state));
+        else {
+            player.nickname = state.nickname;
+            player.targetX = state.x; player.targetY = state.y; player.targetZ = state.z;
+            player.targetYaw = state.yaw; player.targetPitch = state.pitch;
+        }
+    }
+
+    private void removeRemotePlayer(int id) { remotePlayers.removeIf(player -> player.id == id); }
+
+    private void applyRemoteAnimals(List<RemoteAnimalState> states) {
+        ArrayList<Animal> updated = new ArrayList<>(states.size());
+        ArrayList<RemoteAnimalTarget> targets = new ArrayList<>(states.size());
+        for (RemoteAnimalState state : states) {
+            Animal animal = null;
+            for (Animal existing : animals) if (existing.networkId == state.id) { animal = existing; break; }
+            if (animal == null) {
+                animal = new Animal(state.kind, state.x, state.z, state.y, animalRandom);
+                animal.networkId = state.id;
+                animal.x = state.x; animal.y = state.y; animal.z = state.z;
+                animal.yaw = state.yaw; animal.gait = state.gait; animal.updatePartAnimation();
+                animal.growth = state.growth;
+            }
+            animal.alive = state.alive;
+            animal.health = state.health;
+            updated.add(animal);
+            targets.add(new RemoteAnimalTarget(animal, state));
+        }
+        animals = updated.toArray(Animal[]::new);
+        remoteAnimalTargets = targets;
+    }
+
+    private void applyNetworkBlockChange(java.io.DataInputStream input) throws java.io.IOException {
+        int x = input.readInt(), y = input.readInt(), z = input.readInt();
+        byte oldType = input.readByte(), newType = input.readByte();
+        int actorId = input.readInt();
+        if (!World.inBounds(x, y, z)) throw new java.io.IOException("Blok poza światem.");
+        world.set(x, y, z, newType);
+        if (actorId == networkPlayerId && !creativeMode && newType != World.AIR
+                && (oldType == World.AIR || oldType == World.WATER)) {
+            byte item = World.isLadderBlock(newType) ? World.LADDER : newType;
+            inventory[item & 0xff] = Math.max(0, inventory[item & 0xff] - 1);
+        }
+    }
+
+    private void applyNetworkWaterChanges(java.io.DataInputStream input) throws java.io.IOException {
+        int count = input.readInt();
+        if (count < 0 || count > 4096) throw new java.io.IOException("Nieprawidłowa partia zmian wody.");
+        for (int i = 0; i < count; i++) {
+            int x = input.readInt(), y = input.readInt(), z = input.readInt();
+            byte type = input.readByte();
+            short flow = input.readShort();
+            if (!World.inBounds(x, y, z) || type != World.WATER || flow < 0
+                    || (flow & 0xffff) > World.WIDTH + World.DEPTH) {
+                throw new java.io.IOException("Nieprawidłowa zmiana wody.");
+            }
+            world.applyWaterChange(x, y, z, flow);
+        }
+    }
+
+    private void applyNetworkItem(java.io.DataInputStream input) throws java.io.IOException {
+        byte type = input.readByte();
+        int amount = input.readInt();
+        if (Math.abs(amount) > 999) throw new java.io.IOException("Nieprawidłowa liczba przedmiotów.");
+        if (type == World.AIR) meatCount = Math.max(0, Math.min(99, meatCount + amount));
+        else {
+            int index = type & 0xff;
+            if (index >= inventory.length) throw new java.io.IOException("Nieznany przedmiot.");
+            inventory[index] = Math.max(0, Math.min(999, inventory[index] + amount));
+        }
+    }
+
+    private void applyNetworkEnvironment(java.io.DataInputStream input) throws java.io.IOException {
+        float serverDay = input.readFloat(), serverSpeed = input.readFloat();
+        int serverWeather = input.readUnsignedByte();
+        float serverClouds = input.readFloat(), serverRain = input.readFloat(), serverRainPhase = input.readFloat();
+        float serverCloudX = input.readFloat(), serverCloudY = input.readFloat();
+        if (serverWeather >= Weather.values().length || !finite(serverDay, serverSpeed, serverClouds,
+                serverRain, serverRainPhase, serverCloudX, serverCloudY)) {
+            throw new java.io.IOException("Nieprawidłowa pogoda serwera.");
+        }
+        dayTime = serverDay; daySpeed = serverSpeed; weather = Weather.values()[serverWeather];
+        targetCloudCoverage = serverClouds; targetRainIntensity = serverRain;
+        rainPhase = serverRainPhase; cloudOffsetX = serverCloudX; cloudOffsetY = serverCloudY;
+    }
+
+    private void advanceNetworkEnvironment(float dt) {
+        if (daySpeed > 0) dayTime = (dayTime + dt * daySpeed / 240.0f) % 1.0f;
+        cloudOffsetX += dt * 0.0018f; cloudOffsetY += dt * 0.00055f;
+        rainPhase += dt * (28.0f + daySpeed * 8.0f);
+        float blend = Math.min(1.0f, dt * 0.8f);
+        cloudCoverage += (targetCloudCoverage - cloudCoverage) * blend;
+        rainIntensity += (targetRainIntensity - rainIntensity) * blend;
+        updateSunPosition();
+    }
+
+    private void updateRemotePlayers(float dt) {
+        float blend = Math.min(1.0f, dt * 18.0f);
+        for (RemotePlayer player : remotePlayers) {
+            float dx = player.targetX - player.x, dz = player.targetZ - player.z;
+            player.x += dx * blend; player.y += (player.targetY - player.y) * blend; player.z += dz * blend;
+            player.yaw = approachAngle(player.yaw, player.targetYaw, blend);
+            player.pitch += (player.targetPitch - player.pitch) * blend;
+            player.gait += (float) Math.sqrt(dx * dx + dz * dz) * 8.0f;
+        }
+        for (RemoteAnimalTarget target : remoteAnimalTargets) {
+            Animal animal = target.animal;
+            RemoteAnimalState state = target.state;
+            float dx = state.x - animal.x, dz = state.z - animal.z;
+            animal.x += dx * blend; animal.y += (state.y - animal.y) * blend; animal.z += dz * blend;
+            animal.yaw = approachAngle(animal.yaw, state.yaw, blend);
+            animal.gait += (state.gait - animal.gait) * blend;
+            animal.growth += (state.growth - animal.growth) * blend;
+            animal.updatePartAnimation();
+        }
+    }
+
+    private static float approachAngle(float current, float target, float blend) {
+        float difference = (target - current + (float) Math.PI * 3) % ((float) Math.PI * 2) - (float) Math.PI;
+        return current + difference * blend;
+    }
+
+    private void networkConnectionLost(String reason) {
+        NetworkClient client = networkClient;
+        networkClient = null;
+        if (client != null) client.close();
+        networkMode = false; joiningServer = false; networkPlayerId = -1;
+        remotePlayers.clear(); remoteAnimalTargets.clear();
+        inLobby = true; paused = false; inventoryOpen = false; captured = false;
+        leftPressed = rightPressed = false;
+        setCursor(java.awt.Cursor.getDefaultCursor());
+        saveMessage = "Nie udało się połączyć: "
+                + (reason == null || reason.isBlank() ? "połączenie przerwane" : reason);
+        saveMessageTimer = 6.0f;
+    }
+
+    private void initializeStartingInventory() {
+        Arrays.fill(inventory, 0);
+        if (creativeMode) return;
+        inventory[World.GRASS] = 32;
+        inventory[World.DIRT] = 32;
+        inventory[World.STONE] = 24;
+        inventory[World.SAND] = 16;
+        inventory[World.WOOD] = 16;
+        inventory[World.LEAVES] = 16;
+        inventory[World.COD_SPAWN_EGG] = 2;
+        inventory[World.SALMON_SPAWN_EGG] = 2;
+        inventory[World.TROPICAL_FISH_SPAWN_EGG] = 2;
+        inventory[World.PIKE_SPAWN_EGG] = 2;
+        inventory[World.CARP_SPAWN_EGG] = 2;
     }
 
     private void refreshSavedWorlds() {
@@ -2324,6 +2846,29 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         } catch (java.io.IOException error) {
             savedWorlds = List.of();
             saveMessage = "Nie można odczytać listy zapisów";
+        }
+    }
+
+    private void handleNetworkFrame(Protocol.Frame frame) {
+        try (java.io.DataInputStream input = Protocol.input(frame.payload())) {
+            switch (frame.type()) {
+                case REJECT, SERVER_ERROR -> {
+                    String reason = input.readUTF();
+                    Protocol.requireConsumed(input);
+                    networkConnectionLost(reason);
+                }
+                case PLAYER_JOINED, PLAYER_MOVED -> applyRemotePlayer(readRemotePlayer(input));
+                case PLAYER_LEFT -> removeRemotePlayer(input.readInt());
+                case BLOCK_CHANGED -> applyNetworkBlockChange(input);
+                case WATER_CHANGED -> applyNetworkWaterChanges(input);
+                case ANIMAL_SNAPSHOT -> applyRemoteAnimals(readRemoteAnimals(input));
+                case ITEM_DROP -> applyNetworkItem(input);
+                case ENVIRONMENT -> applyNetworkEnvironment(input);
+                default -> throw new java.io.IOException("Nieobsługiwany komunikat serwera.");
+            }
+            Protocol.requireConsumed(input);
+        } catch (java.io.IOException | RuntimeException invalid) {
+            networkConnectionLost("nieprawidłowe dane serwera");
         }
     }
 
@@ -2524,6 +3069,11 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         if (!place && aimedAnimalEntity != null) {
             if (attackCooldown > 0 || aimedAnimalDistance > 5.5f || !aimedAnimalEntity.alive) return;
             attackCooldown = 0.35f;
+            if (networkMode) {
+                sendNetworkAction(Protocol.Type.ANIMAL_ATTACK,
+                        output -> output.writeInt(aimedAnimalEntity.networkId));
+                return;
+            }
             if (aimedAnimalEntity.takeHit() && !creativeMode) {
                 meatCount = Math.min(99, meatCount + aimedAnimalEntity.meatDrop);
                 if (aimedAnimalEntity.kind == Animal.Kind.SHEEP) {
@@ -2536,6 +3086,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         }
         if (!hasHit || hitY < 0 || hitX < 0 || hitZ < 0 || hitX >= World.WIDTH || hitZ >= World.DEPTH) return;
         if (aimedBlockDistance > INTERACTION_REACH || blockActionCooldown > 0) return;
+        if (networkMode) {
+            requestNetworkBlockAction(place);
+            return;
+        }
         if (place) {
             int x = hitX + hitNormalX, y = hitY + hitNormalY, z = hitZ + hitNormalZ;
             if (!World.inBounds(x, y, z)) return;
@@ -2572,6 +3126,15 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     private void spawnFishFromEgg(byte eggType) {
         if (blockActionCooldown > 0 || !hasWaterHit || waterHitDistance > INTERACTION_REACH
                 || world.get(waterHitX, waterHitY, waterHitZ) != World.WATER) return;
+        if (networkMode) {
+            if (!creativeMode && inventory[eggType & 0xff] <= 0) return;
+            sendNetworkAction(Protocol.Type.FISH_SPAWN, output -> {
+                output.writeInt(waterHitX); output.writeInt(waterHitY); output.writeInt(waterHitZ);
+                output.writeByte(eggType);
+            });
+            blockActionCooldown = 0.20f;
+            return;
+        }
         int reusableSlot = -1;
         for (int i = 0; i < animals.length; i++) {
             if (!animals[i].alive) { reusableSlot = i; break; }
@@ -2601,6 +3164,50 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         blockActionCooldown = 0.20f;
     }
 
+    private void requestNetworkBlockAction(boolean place) {
+        int x = hitX, y = hitY, z = hitZ;
+        byte type = World.AIR;
+        int nx = 0, ny = 0, nz = 0;
+        if (place) {
+            x += hitNormalX; y += hitNormalY; z += hitNormalZ;
+            if (!World.inBounds(x, y, z)) return;
+            type = hotbar[selectedBlock];
+            int itemIndex = type & 0xff;
+            if ((world.get(x, y, z) != World.AIR && world.get(x, y, z) != World.WATER)
+                    || (!creativeMode && inventory[itemIndex] <= 0)) return;
+            boolean overlapsPlayer = x + 1 > playerX - 0.23f && x < playerX + 0.23f
+                    && z + 1 > playerZ - 0.23f && z < playerZ + 0.23f
+                    && y + 1 > playerY && y < playerY + 1.8f;
+            if (overlapsPlayer) return;
+            nx = hitNormalX; ny = hitNormalY; nz = hitNormalZ;
+        } else if (y <= 0 || world.get(x, y, z) == World.AIR) return;
+
+        int action = place ? 1 : 0;
+        int actionX = x, actionY = y, actionZ = z;
+        byte selectedType = type;
+        int normalX = nx, normalY = ny, normalZ = nz;
+        sendNetworkAction(Protocol.Type.BLOCK_ACTION, output -> {
+            output.writeByte(action);
+            output.writeInt(actionX); output.writeInt(actionY); output.writeInt(actionZ);
+            output.writeByte(selectedType);
+            output.writeByte(normalX); output.writeByte(normalY); output.writeByte(normalZ);
+        });
+        blockActionCooldown = 0.20f;
+    }
+
+    private void sendNetworkAction(Protocol.Type type, Protocol.PayloadWriter writer) {
+        NetworkClient client = networkClient;
+        if (client == null) {
+            networkConnectionLost("Brak połączenia z serwerem.");
+            return;
+        }
+        try {
+            client.send(type, Protocol.payload(writer));
+        } catch (java.io.IOException failure) {
+            networkConnectionLost(failure.getMessage());
+        }
+    }
+
     private boolean pressed(int key) {
         synchronized (keys) { return key >= 0 && key < keys.length && keys[key]; }
     }
@@ -2623,6 +3230,11 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             toggleFullScreen();
             return;
         }
+        if (!inLobby && key == KeyEvent.VK_F5 && networkMode) {
+            saveMessage = "W trybie sieciowym zapisuje serwer";
+            saveMessageTimer = 4.0f;
+            return;
+        }
         if (!inLobby && key == KeyEvent.VK_F5) {
             saveRequested = true;
             saveMessage = "Zapisywanie świata…";
@@ -2630,12 +3242,16 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             return;
         }
         if (inLobby) {
-            if (key == KeyEvent.VK_BACK_SPACE && nicknameFocused && !nickname.isEmpty()) {
+            if (key == KeyEvent.VK_BACK_SPACE && serverAddressFocused && !serverAddress.isEmpty()) {
+                serverAddress = serverAddress.substring(0, serverAddress.length() - 1);
+            } else if (key == KeyEvent.VK_BACK_SPACE && nicknameFocused && !nickname.isEmpty()) {
                 nickname = nickname.substring(0, nickname.length() - 1);
             } else if (key == KeyEvent.VK_ENTER) {
-                enterWorld();
+                if (serverAddressFocused) beginNetworkJoin();
+                else enterWorld();
             } else if (key == KeyEvent.VK_ESCAPE) {
                 nicknameFocused = false;
+                serverAddressFocused = false;
             }
             return;
         }
@@ -2669,7 +3285,11 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
     @Override public void keyReleased(KeyEvent e) { int key = e.getKeyCode(); synchronized (keys) { if (key >= 0 && key < keys.length) keys[key] = false; } }
     @Override public void keyTyped(KeyEvent e) {
         char character = e.getKeyChar();
-        if (inLobby && nicknameFocused && nickname.length() < 16
+        if (inLobby && serverAddressFocused && serverAddress.length() < 100
+                && (Character.isLetterOrDigit(character) || character == '.' || character == '-'
+                || character == ':' || character == '[' || character == ']')) {
+            serverAddress += character;
+        } else if (inLobby && nicknameFocused && nickname.length() < 16
                 && (Character.isLetterOrDigit(character) || character == '_' || character == '-')) {
             nickname += character;
         }
@@ -2693,9 +3313,22 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 int modeY = cardY + LOBBY_MODE_Y;
                 int saveListX = lobbyLeftCardX(centerX);
                 int saveListTop = cardY + LOBBY_SAVED_LIST_Y;
-                int visibleSaves = Math.min(5, Math.max(0, savedWorlds.size() - savedWorldOffset));
+                int visibleSaves = Math.min(LOBBY_SAVED_ROWS, Math.max(0, savedWorlds.size() - savedWorldOffset));
+                if (inside(mouseX, mouseY, saveListX + 15, cardY + LOBBY_SERVER_INPUT_Y,
+                        LOBBY_CARD_WIDTH - 30, LOBBY_SERVER_INPUT_HEIGHT)) {
+                    serverAddressFocused = true;
+                    nicknameFocused = false;
+                    return;
+                }
+                if (inside(mouseX, mouseY, saveListX + 15, cardY + LOBBY_CONNECT_Y,
+                        LOBBY_CARD_WIDTH - 30, LOBBY_CONNECT_HEIGHT)) {
+                    serverAddressFocused = false;
+                    beginNetworkJoin();
+                    return;
+                }
                 if (inside(mouseX, mouseY, saveListX + 15, saveListTop,
                         LOBBY_CARD_WIDTH - 30, visibleSaves * LOBBY_SAVED_ROW_STEP - 3)) {
+                    serverAddressFocused = false;
                     int row = (mouseY - saveListTop) / LOBBY_SAVED_ROW_STEP;
                     if (row < visibleSaves) {
                         WorldStorage.SaveInfo save = savedWorlds.get(savedWorldOffset + row);
@@ -2709,12 +3342,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                         LOBBY_SURVIVAL_WIDTH, LOBBY_MODE_HEIGHT)) {
                     creativeMode = false;
                     nicknameFocused = false;
+                    serverAddressFocused = false;
                     return;
                 }
                 if (inside(mouseX, mouseY, rightX + LOBBY_CREATIVE_X, modeY,
                         LOBBY_CREATIVE_WIDTH, LOBBY_MODE_HEIGHT)) {
                     creativeMode = true;
                     nicknameFocused = false;
+                    serverAddressFocused = false;
                     aggressionDragging = false;
                     return;
                 }
@@ -2739,11 +3374,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
                 }
                 if (inside(mouseX, mouseY, left, top, LOBBY_NICKNAME_WIDTH, LOBBY_NICKNAME_HEIGHT)) {
                     nicknameFocused = true;
+                    serverAddressFocused = false;
                 } else if (inside(mouseX, mouseY, startX, startY,
                         LOBBY_START_BUTTON_WIDTH, LOBBY_START_BUTTON_HEIGHT)) {
+                    serverAddressFocused = false;
                     enterWorld();
                 } else {
                     nicknameFocused = false;
+                    serverAddressFocused = false;
                 }
             }
             return;
@@ -2796,10 +3434,10 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         if (inventoryOpen) return;
         if (inLobby) {
             int listX = lobbyLeftCardX(WINDOW_WIDTH / 2);
-            int listY = lobbyCardY(WINDOW_HEIGHT / 2) + 229;
-            if (savedWorlds.size() > 5 && inside(toVirtualX(e.getX()), toVirtualY(e.getY()), listX, listY,
-                    LOBBY_CARD_WIDTH, 5 * LOBBY_SAVED_ROW_STEP + 10)) {
-                savedWorldOffset = Math.max(0, Math.min(savedWorlds.size() - 5,
+            int listY = lobbyCardY(WINDOW_HEIGHT / 2) + LOBBY_SAVED_LIST_Y;
+            if (savedWorlds.size() > LOBBY_SAVED_ROWS && inside(toVirtualX(e.getX()), toVirtualY(e.getY()), listX, listY,
+                    LOBBY_CARD_WIDTH, LOBBY_SAVED_ROWS * LOBBY_SAVED_ROW_STEP + 10)) {
+                savedWorldOffset = Math.max(0, Math.min(savedWorlds.size() - LOBBY_SAVED_ROWS,
                         savedWorldOffset + e.getWheelRotation()));
             }
             return;
@@ -2829,6 +3467,61 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         AnimalHit[] hits = new AnimalHit[count];
         for (int i = 0; i < count; i++) hits[i] = new AnimalHit();
         return hits;
+    }
+
+    private static PlayerHit[] newPlayerHitScratch(int count) {
+        PlayerHit[] hits = new PlayerHit[count];
+        for (int i = 0; i < count; i++) hits[i] = new PlayerHit();
+        return hits;
+    }
+
+    private static boolean finite(float... values) {
+        for (float value : values) if (!Float.isFinite(value)) return false;
+        return true;
+    }
+
+    private record NetworkWelcome(int playerId, String nickname, long seed, boolean creativeMode,
+                                  int aggressionLevel, float daySpeed, int spawnX, int spawnZ,
+                                  float playerX, float playerY, float playerZ, World world,
+                                  float dayTime, int weather, float cloudCoverage, float rainIntensity,
+                                  float rainPhase, float cloudOffsetX, float cloudOffsetY,
+                                  List<RemotePlayerState> players, List<RemoteAnimalState> animals) {}
+
+    private record RemotePlayerState(int id, String nickname, float x, float y, float z, float yaw, float pitch) {}
+
+    private record RemoteAnimalState(int id, Animal.Kind kind, boolean alive, int health,
+                                     float x, float y, float z, float yaw, float gait, float growth) {}
+
+    private record AvatarPart(float minX, float minY, float minZ, float maxX, float maxY, float maxZ,
+                              int color, float gaitOffset) {}
+
+    private static final class RemoteAnimalTarget {
+        final Animal animal;
+        final RemoteAnimalState state;
+        RemoteAnimalTarget(Animal animal, RemoteAnimalState state) { this.animal = animal; this.state = state; }
+    }
+
+    private static final class RemotePlayer {
+        final int id;
+        String nickname;
+        float x, y, z, yaw, pitch, targetX, targetY, targetZ, targetYaw, targetPitch, gait;
+
+        RemotePlayer(RemotePlayerState state) {
+            id = state.id; nickname = state.nickname;
+            x = targetX = state.x; y = targetY = state.y; z = targetZ = state.z;
+            yaw = targetYaw = state.yaw; pitch = targetPitch = state.pitch;
+        }
+    }
+
+    private static final class PlayerHit {
+        RemotePlayer player;
+        int color;
+        float distance, nx, ny, nz;
+
+        void set(RemotePlayer player, int color, float distance, float nx, float ny, float nz) {
+            this.player = player; this.color = color; this.distance = distance;
+            this.nx = nx; this.ny = ny; this.nz = nz;
+        }
     }
 
     private static final class RainSplash {

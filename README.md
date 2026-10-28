@@ -21,6 +21,28 @@ java -jar build/TytanCraft.jar [seed]
 
 Testy bez dodatkowych zależności uruchom poleceniem `sh test.sh`.
 
+## Tryb sieciowy
+
+Serwer dedykowany działa bez interfejsu graficznego i przyjmuje do 10 graczy. W katalogu projektu uruchom:
+
+```sh
+sh server.sh [seed] [port]
+```
+
+Domyślny port to `25570`. Argumenty można pominąć, aby wylosować seed i użyć portu domyślnego. Po zbudowaniu aplikacji można też uruchomić serwer z JAR-a:
+
+```sh
+sh package.sh
+sh build/server.sh [seed] [port]
+```
+
+W lobby gry wpisz adres `host:port` i wybierz **Dołącz do serwera**. Na tym samym komputerze użyj `127.0.0.1:25570`.
+
+### Dostęp z Internetu
+
+- **playit.gg:** utwórz tunel typu **TCP**, ustaw lokalny adres docelowy `127.0.0.1:25570`, uruchom serwer i podaj graczom przydzielony przez playit adres oraz port.
+- **Darmowy VPS:** uruchom `sh server.sh [seed] 25570`, a następnie zezwól na ruch **TCP 25570** w firewallu systemu i regułach sieciowych dostawcy VPS. Gracze łączą się z publicznym adresem VPS i portem `25570`.
+
 ## Sterowanie
 
 - W lobby ustaw nick i wybierz **Wejdź do świata** lub naciśnij **Enter**

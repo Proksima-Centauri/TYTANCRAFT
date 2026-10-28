@@ -20,3 +20,5 @@ else
     java -m jdk.jartool/sun.tools.jar.Main --create --file "$ROOT/build/TytanCraft.jar" \
         --main-class dev.tytancraft.TytanCraft -C "$CLASSES" .
 fi
+cp "$ROOT/server.sh" "$ROOT/build/server.sh"
+chmod +x "$ROOT/build/server.sh"

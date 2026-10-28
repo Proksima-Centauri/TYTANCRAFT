@@ -1,10 +1,13 @@
 package dev.tytancraft;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 
 final class World {
+    record BlockChange(int x, int y, int z, byte type, short waterFlow) {}
     static final int WIDTH = 192;
     static final int HEIGHT = 64;
     static final int DEPTH = 192;
@@ -65,6 +68,8 @@ final class World {
     private final int[] heights = new int[WIDTH * DEPTH];
     private final int[] canopyHeights = new int[WIDTH * DEPTH];
     private final WaterQueue waterQueue = new WaterQueue();
+    private final ArrayList<BlockChange> waterChanges = new ArrayList<>();
+    private boolean trackWaterChanges;
     private short waterVisitGeneration = 1;
     private final long seed;
 
@@ -110,6 +115,18 @@ final class World {
     short[] copyWaterFlow() { return waterFlow.clone(); }
 
     long[] copyPendingWaterFlow() { return waterQueue.toArray(); }
+
+    void trackWaterChanges(boolean enabled) {
+        trackWaterChanges = enabled;
+        waterChanges.clear();
+    }
+
+    List<BlockChange> drainWaterChanges() {
+        if (waterChanges.isEmpty()) return List.of();
+        List<BlockChange> changes = List.copyOf(waterChanges);
+        waterChanges.clear();
+        return changes;
+    }
 
     int torchLightAt(int x, int y, int z) {
         if (!inBounds(x, y, z)) return 0;
@@ -162,6 +179,14 @@ final class World {
         if (y >= canopyHeights[z * WIDTH + x] - 1) recalculateCanopyHeight(x, z);
         if (oldType == TORCH && type != TORCH) rebuildTorchLighting();
         else if (type == TORCH) spreadTorchLightFrom(blockIndex);
+    }
+
+    void applyWaterChange(int x, int y, int z, short flowLevel) {
+        if (!insideWorld(x, z) || y < 0 || y >= HEIGHT || flowLevel < 0
+                || (flowLevel & 0xffff) > MAX_WATER_FLOW) return;
+        int cell = index(x, y, z);
+        blocks[cell] = WATER;
+        waterFlow[cell] = flowLevel;
     }
 
     void flowWaterInto(int x, int y, int z) {
@@ -582,6 +607,7 @@ final class World {
         blocks[cell] = WATER;
         waterFlow[cell] = (short) level;
         waterQueue.add(packWaterCell(cell, level));
+        if (trackWaterChanges) waterChanges.add(new BlockChange(x, y, z, WATER, (short) level));
     }
 
     private void spreadTorchLightFrom(int source) {

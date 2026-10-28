@@ -67,6 +67,7 @@ final class Animal {
     final Kind kind;
     final Part[] parts;
     final int meatDrop;
+    int networkId = -1;
     int health;
     boolean alive = true;
     float x, y, z, yaw, gait, verticalVelocity, growth = 1.0f;

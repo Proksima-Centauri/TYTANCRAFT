@@ -18,8 +18,6 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 final class WorldStorage {
-    private static final int MAGIC = 0x54594352;
-    private static final int VERSION = 2;
     private static final int MAX_ANIMALS = 128;
     private static final Path SAVE_DIRECTORY = Path.of(
             System.getProperty("user.home"), ".tytancraft", "worlds");
@@ -113,16 +111,7 @@ final class WorldStorage {
     }
 
     private static void write(DataOutputStream output, Data data) throws IOException {
-        output.writeInt(MAGIC);
-        output.writeInt(VERSION);
-        output.writeLong(data.seed);
-        output.writeInt(World.WIDTH);
-        output.writeInt(World.HEIGHT);
-        output.writeInt(World.DEPTH);
-        output.write(data.blocks);
-        for (short flow : data.waterFlow) output.writeShort(flow);
-        output.writeInt(data.waterQueue.length);
-        for (long entry : data.waterQueue) output.writeLong(entry);
+        WorldStateCodec.write(output, new WorldStateCodec.Snapshot(data.seed, data.blocks, data.waterFlow, data.waterQueue));
 
         output.writeInt(data.spawnX);
         output.writeInt(data.spawnZ);
@@ -172,23 +161,12 @@ final class WorldStorage {
     }
 
     private static Data read(DataInputStream input) throws IOException {
-        if (input.readInt() != MAGIC) throw new IOException("To nie jest zapis TytanCraft.");
-        int version = input.readInt();
-        if (version < 1 || version > VERSION) throw new IOException("Nieobsługiwana wersja zapisu.");
+        WorldStateCodec.Snapshot world = WorldStateCodec.read(input);
         Data data = new Data();
-        data.seed = input.readLong();
-        if (input.readInt() != World.WIDTH || input.readInt() != World.HEIGHT
-                || input.readInt() != World.DEPTH) throw new IOException("Zapis ma inny rozmiar świata.");
-        data.blocks = new byte[World.WIDTH * World.HEIGHT * World.DEPTH];
-        input.readFully(data.blocks);
-        data.waterFlow = new short[data.blocks.length];
-        for (int i = 0; i < data.waterFlow.length; i++) data.waterFlow[i] = input.readShort();
-        if (version >= 2) {
-            int queuedWater = input.readInt();
-            if (queuedWater < 0 || queuedWater > data.blocks.length) throw new IOException("Nieprawidłowa kolejka wody.");
-            data.waterQueue = new long[queuedWater];
-            for (int i = 0; i < queuedWater; i++) data.waterQueue[i] = input.readLong();
-        } else data.waterQueue = new long[0];
+        data.seed = world.seed();
+        data.blocks = world.blocks();
+        data.waterFlow = world.waterFlow();
+        data.waterQueue = world.waterQueue();
 
         data.spawnX = input.readInt();
         data.spawnZ = input.readInt();
