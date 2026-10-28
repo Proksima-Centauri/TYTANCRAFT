@@ -9,4 +9,5 @@ else
     java -m jdk.compiler/com.sun.tools.javac.Main -source 17 -target 17 -Xlint:-options -encoding UTF-8 \
         -d "$ROOT/build/classes" "$ROOT"/src/main/java/dev/tytancraft/*.java
 fi
+cp "$ROOT/ICON.png" "$ROOT/build/classes/ICON.png"
 java -cp "$ROOT/build/classes" dev.tytancraft.TytanCraft "$@"

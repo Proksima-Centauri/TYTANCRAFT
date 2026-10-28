@@ -9,6 +9,7 @@ import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
 import java.awt.RenderingHints;
 import java.awt.Robot;
+import java.awt.Taskbar;
 import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
@@ -25,12 +26,14 @@ import java.awt.geom.Path2D;
 import java.awt.image.BufferStrategy;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.stream.IntStream;
+import javax.imageio.ImageIO;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 
@@ -262,6 +265,18 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
         World world = new World(seed);
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("TytanCraft — Dzika Dolina");
+            BufferedImage icon = loadApplicationIcon();
+            if (icon != null) {
+                frame.setIconImage(icon);
+                try {
+                    if (Taskbar.isTaskbarSupported()) {
+                        Taskbar taskbar = Taskbar.getTaskbar();
+                        if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) taskbar.setIconImage(icon);
+                    }
+                } catch (UnsupportedOperationException ignored) {
+                    // Some desktop environments expose Taskbar without supporting custom icons.
+                }
+            }
             TytanCraft game = new TytanCraft(seed, world);
             game.window = frame;
             game.graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
@@ -283,6 +298,14 @@ public final class TytanCraft extends Canvas implements KeyListener, MouseListen
             game.gameThread.setDaemon(true);
             game.gameThread.start();
         });
+    }
+
+    private static BufferedImage loadApplicationIcon() {
+        try (var input = TytanCraft.class.getResourceAsStream("/ICON.png")) {
+            return input == null ? null : ImageIO.read(input);
+        } catch (IOException ignored) {
+            return null;
+        }
     }
 
     private static long parseSeed(String text) {
